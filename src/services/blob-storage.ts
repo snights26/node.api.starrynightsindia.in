@@ -363,8 +363,9 @@ export class StorageService {
   private commandOptions(access: StorageAccess): BlobCommandOptions {
     const storeId = access === "private" ? env.storage.privateStoreId : env.storage.publicStoreId;
     const token = access === "private" ? env.storage.privateReadWriteToken : env.storage.publicReadWriteToken;
-    if (!storeId && !token) throw missingStorage();
-    return { ...(storeId ? { storeId } : {}), ...(token ? { token } : {}) };
+    if (storeId) return { storeId };
+    if (token) return { token };
+    throw missingStorage();
   }
 
   private identifier(reference: string, access: StorageAccess): string {

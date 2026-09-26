@@ -70,12 +70,12 @@ means a dedicated staging value/account still has to be supplied.
 | `UPLOAD_MAX_FILE_SIZE_BYTES` | Optional; `26214400` | Operational | direct-upload product limit | Travel photos/public media maximum. | 25 MB direct Blob path. |
 | `FUNCTION_UPLOAD_MAX_SIZE_BYTES` | Optional; max 4 MB | Operational | all environments | Legacy multipart compatibility limit below Vercel’s 4.5 MB ceiling. | New Vercel limit. |
 | `PRIVATE_ATTACHMENT_MAX_SIZE_BYTES` | Optional; `10485760` | Operational | direct private document limit | Career/quotation maximum. | Direct Blob path; not a Function body limit. |
-| `VERCEL_BLOB_ENABLED` | Required for Blob flows | Operational policy | true in configured staging/production | Enables durable object storage. | New Vercel configuration. |
 | `STORAGE_NAMESPACE` | Required outside local | Operational safety | starts `staging/` or `production/` | Separates Blob object paths by environment. | Startup gate. |
-| `VERCEL_BLOB_PRIVATE_STORE_ID` | Required for private Blob | Non-secret server config | separate staging/production store | Selects private Blob store for OIDC. | External setup pending. |
-| `VERCEL_BLOB_PUBLIC_STORE_ID` | Required for public Blob | Non-secret server config | separate staging/production store | Selects public Blob store for OIDC. | External setup pending. |
+| `BLOB_STORE_ID` | Optional official single-store fallback | Non-secret server config | isolated private store | Uses the Vercel Blob integration's standard selected-store name. | Used only if `BLOB_PRIVATE_STORE_ID` is absent. |
+| `BLOB_PRIVATE_STORE_ID` | Required for private Blob | Non-secret server config | separate staging/production store | Selects private Blob storage for Vercel OIDC. | External setup pending. |
+| `BLOB_PUBLIC_STORE_ID` | Required for public Blob only | Non-secret server config | separate staging/production store | Selects intentional public direct-media storage for Vercel OIDC. | Not required while public media stays on Cloudinary. |
 | `BLOB_WEBHOOK_PUBLIC_KEY` | Required for presigned direct uploads | Public server config | Vercel-generated per connected store/project | Verifies Vercel Blob upload callbacks and is required by `handleUploadPresigned`. | External setup pending; this is not a secret. |
-| `VERCEL_BLOB_*_READ_WRITE_TOKEN` | Local migration only | Secret | never client/never Git | Scoped CLI credential fallback; Vercel Functions prefer OIDC. | Must not be set in mobile/frontend. |
+| `BLOB_READ_WRITE_TOKEN` / `BLOB_*_READ_WRITE_TOKEN` | Local migration only | Secret | never client/never Git | Scoped CLI credential fallback; Vercel Functions prefer OIDC when a store ID is configured. | Must not be set in mobile/frontend. |
 | `MAIL_DELIVERY_MODE` | Required for staging | Operational safety | `safe` or `disabled` in staging | Suppresses mail outside explicit safe recipients. | New Vercel gate. |
 | `SMTP_SAFE_RECIPIENTS` | Required for safe mode | Operational identity | dedicated staging recipients | Only addresses permitted when safe delivery is enabled. | External setup pending. |
 | `CACHE_ENABLED` | Optional; `true` | Operational policy | normally true | In-process public cache. Legacy `STARRY_CACHE_ENABLED`. | legacy available/default reviewed. |
@@ -85,12 +85,12 @@ means a dedicated staging value/account still has to be supplied.
 
 ## Vercel Blob and deployment placement rules
 
-- `VERCEL_BLOB_PRIVATE_STORE_ID`, `VERCEL_BLOB_PUBLIC_STORE_ID`,
+- `BLOB_STORE_ID`, `BLOB_PRIVATE_STORE_ID`, `BLOB_PUBLIC_STORE_ID`,
   `BLOB_WEBHOOK_PUBLIC_KEY`, `STORAGE_NAMESPACE`, limits, and deployment labels are server configuration,
   not mobile/client environment variables.
-- A connected Blob store supplies `BLOB_STORE_ID`, `VERCEL_OIDC_TOKEN`, and
-  `BLOB_WEBHOOK_PUBLIC_KEY`. This project maps distinct private/public store
-  IDs explicitly and relies on Vercel's managed OIDC token at runtime. Blob
+- A connected Blob store supplies `BLOB_STORE_ID` and a Function receives
+  `VERCEL_OIDC_TOKEN` automatically. This project maps distinct private/public
+  store IDs explicitly and relies on Vercel's managed OIDC token at runtime. Blob
   read-write tokens are secret local migration credentials only and must not be
   stored in Vercel Preview/Production unless OIDC is unavailable and a separate
   exception is approved.

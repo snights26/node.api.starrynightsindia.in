@@ -8,9 +8,8 @@ import jwt from "jsonwebtoken";
 // Set before dynamic imports because config is intentionally read once at
 // process start, just as it is in a Vercel Function.
 process.env.JWT_SECRET = "s".repeat(48);
-process.env.VERCEL_BLOB_ENABLED = "true";
-process.env.VERCEL_BLOB_PRIVATE_STORE_ID = "private-test-store";
-process.env.VERCEL_BLOB_PUBLIC_STORE_ID = "public-test-store";
+process.env.BLOB_PRIVATE_STORE_ID = "private-test-store";
+process.env.BLOB_PUBLIC_STORE_ID = "public-test-store";
 process.env.STORAGE_NAMESPACE = "staging/starry-nights";
 process.env.DEPLOYMENT_ENVIRONMENT = "local";
 process.env.RAZORPAY_WEBHOOK_SECRET = "w".repeat(32);

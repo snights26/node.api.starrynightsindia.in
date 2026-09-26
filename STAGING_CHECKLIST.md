@@ -52,10 +52,9 @@ This checklist names configuration only; it contains no secret values. Keep runt
 | `UPLOAD_MAX_FILE_SIZE_BYTES` | Optional | API | Direct Blob photo/public-media maximum. | Default/source reviewed. |
 | `FUNCTION_UPLOAD_MAX_SIZE_BYTES` | Optional, max 4 MB | API | Legacy multipart compatibility cap below Vercel limit. | New Vercel guard. |
 | `PRIVATE_ATTACHMENT_MAX_SIZE_BYTES` | Optional | API | Direct Blob career/quotation document maximum. | Default/source reviewed. |
-| `VERCEL_BLOB_ENABLED` | Required for file flows | API | Enables durable object storage. | Blob stores still need connection. |
+| `BLOB_PRIVATE_STORE_ID` / `BLOB_STORE_ID` | Required for private file flows | API | Selects the staging private Blob store and activates Vercel OIDC. | Blob store still needs connection. |
 | `STORAGE_NAMESPACE` | Required | API | `staging/...` path isolation. | New startup gate. |
-| `VERCEL_BLOB_PRIVATE_STORE_ID` | Required for private files | API | Staging private store ID for OIDC. | External setup pending. |
-| `VERCEL_BLOB_PUBLIC_STORE_ID` | Required for public direct media | API | Staging public store ID for OIDC. | External setup pending. |
+| `BLOB_PUBLIC_STORE_ID` | Required for public direct media only | API | Staging public store ID for OIDC. | Not required while public media remains on Cloudinary. |
 | `MAIL_DELIVERY_MODE` | Required | API | `safe` or `disabled`; never customer mail by default. | New startup gate. |
 | `SMTP_SAFE_RECIPIENTS` | Conditional | API | Explicit recipients allowed in safe mode. | External setup pending. |
 | `CACHE_ENABLED` | Required policy choice | API | Enables in-memory public cache. | Enabled in local validation. |

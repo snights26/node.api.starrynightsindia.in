@@ -13,9 +13,11 @@ existing Cloudinary library.
 
 ## Stores and object classes
 
-Use separate Blob stores/namespaces for private and public material. Deployed
-Vercel Functions use platform OIDC plus non-secret store IDs. A scoped token is
-allowed only for a local one-time migration shell.
+Use separate Blob stores/namespaces for private and public material when both
+classes are needed. Deployed Vercel Functions use platform OIDC plus
+non-secret `BLOB_PRIVATE_STORE_ID`/`BLOB_PUBLIC_STORE_ID` values (or the
+official single-private-store fallback `BLOB_STORE_ID`). A scoped
+`BLOB_READ_WRITE_TOKEN` is allowed only for a local one-time migration shell.
 
 | Content | Access | Representation | Read behavior |
 | --- | --- | --- | --- |
@@ -78,10 +80,12 @@ guidance. Product limits remain available through direct Blob, so photos remain
 
 ## Required external setup
 
-1. Connect separate staging private/public Blob stores to the Vercel project.
-2. Supply their non-secret IDs and `BLOB_WEBHOOK_PUBLIC_KEY` to Functions and
-   use Vercel-managed OIDC; keep read/write tokens only in a local migration
-   shell.
+1. Connect an isolated staging private Blob store to the Vercel project. Add a
+   public store only if a direct public-media flow is enabled; existing
+   Cloudinary URLs remain the public-media system until then.
+2. Supply the selected store's non-secret `BLOB_PRIVATE_STORE_ID` (or official
+   `BLOB_STORE_ID`) and `BLOB_WEBHOOK_PUBLIC_KEY` to Functions. Vercel-managed
+   OIDC is preferred; keep read/write tokens only in a local migration shell.
 3. Use isolated namespaces such as `staging/starry-nights` and
    `production/starry-nights`.
 4. Move file callers to direct flows before sending more than 4 MB.

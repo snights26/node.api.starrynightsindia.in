@@ -31,6 +31,14 @@ const googleAllowedClientIds = parseGoogleAllowedClientIds(process.env.GOOGLE_AL
 const deploymentEnvironment = (process.env.DEPLOYMENT_ENVIRONMENT ?? "local").trim().toLowerCase();
 const databaseEnvironment = process.env.DATABASE_ENVIRONMENT?.trim().toLowerCase() || undefined;
 const storageNamespace = process.env.STORAGE_NAMESPACE?.trim().replace(/^\/+|\/+$/g, "") || deploymentEnvironment;
+// Vercel Blob uses an OIDC token supplied to Functions at runtime. Store IDs
+// are intentionally separate from the automatic token, so a staging Function
+// cannot silently select a production store. `BLOB_STORE_ID` is the official
+// single-store integration name and is treated as the private-store fallback.
+const privateBlobStoreId = process.env.BLOB_PRIVATE_STORE_ID?.trim() || process.env.BLOB_STORE_ID?.trim() || undefined;
+const publicBlobStoreId = process.env.BLOB_PUBLIC_STORE_ID?.trim() || undefined;
+const privateBlobReadWriteToken = process.env.BLOB_PRIVATE_READ_WRITE_TOKEN || process.env.BLOB_READ_WRITE_TOKEN || undefined;
+const publicBlobReadWriteToken = process.env.BLOB_PUBLIC_READ_WRITE_TOKEN || undefined;
 const csv = (value: string | undefined): string[] => (value ?? "")
   .split(",")
   .map((item) => item.trim())
@@ -86,21 +94,24 @@ export const env = {
   functionUploadMaxFileSize: Math.min(asInteger(process.env.FUNCTION_UPLOAD_MAX_SIZE_BYTES, 4 * 1024 * 1024), 4 * 1024 * 1024),
   privateAttachmentMaxFileSize: asInteger(process.env.PRIVATE_ATTACHMENT_MAX_SIZE_BYTES, 10 * 1024 * 1024),
   storage: {
-    enabled: asBoolean(process.env.VERCEL_BLOB_ENABLED),
+    // A configured store ID activates the Vercel OIDC path. A read/write token
+    // remains a local-only fallback for the migration utility; it is never
+    // needed in a Vercel Function and must not be exposed to a client.
+    enabled: Boolean(privateBlobStoreId || publicBlobStoreId || privateBlobReadWriteToken || publicBlobReadWriteToken),
     namespace: storageNamespace,
-    privateStoreId: process.env.VERCEL_BLOB_PRIVATE_STORE_ID?.trim() || undefined,
-    publicStoreId: process.env.VERCEL_BLOB_PUBLIC_STORE_ID?.trim() || undefined,
+    privateStoreId: privateBlobStoreId,
+    publicStoreId: publicBlobStoreId,
     // Added by a connected Blob store. It is a public verification key, not a
     // credential, but `handleUploadPresigned` requires it for callback safety.
     webhookPublicKey: process.env.BLOB_WEBHOOK_PUBLIC_KEY?.trim() || undefined,
     // Local migration/testing may use scoped Vercel Blob tokens. Production
     // Vercel Functions use short-lived platform OIDC credentials instead.
-    privateReadWriteToken: process.env.VERCEL_BLOB_PRIVATE_READ_WRITE_TOKEN || undefined,
-    publicReadWriteToken: process.env.VERCEL_BLOB_PUBLIC_READ_WRITE_TOKEN || undefined,
-    uploadIntentMinutes: asInteger(process.env.VERCEL_BLOB_UPLOAD_INTENT_MINUTES, 15),
+    privateReadWriteToken: privateBlobReadWriteToken,
+    publicReadWriteToken: publicBlobReadWriteToken,
+    uploadIntentMinutes: asInteger(process.env.BLOB_UPLOAD_INTENT_MINUTES, 15),
     // Public cache entries live for five minutes, so signed reads outlive one
     // cache window without becoming long-lived credentials.
-    downloadUrlMinutes: asInteger(process.env.VERCEL_BLOB_DOWNLOAD_URL_MINUTES, 15),
+    downloadUrlMinutes: asInteger(process.env.BLOB_DOWNLOAD_URL_MINUTES, 15),
   },
   mail: {
     deliveryMode: (process.env.MAIL_DELIVERY_MODE?.trim().toLowerCase() || "live") as "live" | "safe" | "disabled",

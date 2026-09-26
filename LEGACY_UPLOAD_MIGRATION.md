@@ -52,9 +52,8 @@ DEPLOYMENT_ENVIRONMENT=staging
 DATABASE_ENVIRONMENT=staging
 DATABASE_URL=<node-staging pooled URL>
 LEGACY_UPLOAD_ARCHIVE=<read-only historical archive path>
-VERCEL_BLOB_ENABLED=true
-VERCEL_BLOB_PRIVATE_STORE_ID=<staging private store id>
-VERCEL_BLOB_PRIVATE_READ_WRITE_TOKEN=<local migration credential>
+BLOB_PRIVATE_STORE_ID=<staging private store id>
+BLOB_PRIVATE_READ_WRITE_TOKEN=<local migration credential>
 ```
 
 Dry-run inventory:
