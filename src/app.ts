@@ -9,6 +9,7 @@ import { openapi } from "./docs/openapi.js";
 import { optionalAuthenticate, restrictedAdminWrite } from "./lib/auth.js";
 import { AppError } from "./lib/api.js";
 import { errorHandler, notFoundHandler } from "./middleware/errors.js";
+import { noStoreByDefault } from "./services/public-cdn-cache.js";
 import { authRouter } from "./modules/auth/routes.js";
 import { analyticsRouter } from "./modules/analytics/routes.js";
 import { adminsRouter } from "./modules/admins/routes.js";
@@ -34,6 +35,7 @@ app.disable("x-powered-by");
 app.set("trust proxy", 1);
 app.use(pinoHttp({ redact: ["req.headers.authorization", "req.body.password", "req.body.idToken", "req.body.refreshToken"] }));
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+app.use("/api", noStoreByDefault);
 app.use(cors({
   origin(origin, callback) {
     if (!origin || env.corsAllowedOrigins.includes(origin)) return callback(null, true);

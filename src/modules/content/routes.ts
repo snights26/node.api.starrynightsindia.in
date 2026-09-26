@@ -6,6 +6,7 @@ import { asyncRoute, badRequest, created, message, notFound, ok, validateBody } 
 import { authenticate, requireRole, requireAnyRole } from "../../lib/auth.js";
 import { booleanValue, firstString, integerValue, isoDate, objectList, optionalString, stringValue, type JsonObject } from "../../lib/values.js";
 import { publicCache } from "../../services/public-cache.js";
+import { invalidatePublicCache, publicCdnCache, publicCdnPolicies } from "../../services/public-cdn-cache.js";
 import { mapCategory, mapPackageSummary } from "../catalog/mapper.js";
 import { categoryByCode, listCategories, listPackages } from "../catalog/repository.js";
 import type { CategoryRow, PackageRow } from "../catalog/types.js";
@@ -14,6 +15,12 @@ export const contentRouter = Router();
 const superAdmin = [authenticate, requireRole("SUPER_ADMIN")];
 const adminRead = [authenticate, requireAnyRole("ADMIN", "SUPER_ADMIN")];
 const param = (value: string | string[] | undefined): string => Array.isArray(value) ? value[0] ?? "" : value ?? "";
+const invalidateFeatured = async (): Promise<void> => {
+  await invalidatePublicCache({ memoryGroups: ["featured"], tags: ["featured", "homepage", "packages", "categories"] });
+};
+const invalidateHomepage = async (tag: "hero" | "statistics"): Promise<void> => {
+  await invalidatePublicCache({ memoryGroups: ["content"], tags: ["homepage", tag] });
+};
 const objectInput = z.object({
   id: z.string().trim().max(100).optional(), title: z.string().trim().max(255).optional(), rowId: z.string().trim().max(60).optional(), rowTitle: z.string().trim().max(255).optional(),
   type: z.string().trim().max(30).optional(), rowType: z.string().trim().max(30).optional(), visibleOn: z.string().trim().max(30).optional(), packageMode: z.string().trim().max(30).optional(), categoryMatchOperator: z.enum(["OR", "AND", "or", "and"]).optional(),
@@ -104,7 +111,7 @@ const publicFeatured = async (visibleOn: string): Promise<Record<string, unknown
 };
 
 contentRouter.get("/featured-rows", ...adminRead, asyncRoute(async (_request, response) => response.json(ok((await featureRows()).map(mapFeaturedRow)))));
-contentRouter.get("/featured-rows/public", asyncRoute(async (request, response) => {
+contentRouter.get("/featured-rows/public", publicCdnCache(publicCdnPolicies.homepage, ["featured", "homepage", "packages", "categories"]), asyncRoute(async (request, response) => {
   const visibleOn = typeof request.query.visibleOn === "string" ? request.query.visibleOn : "home";
   const data = await publicCache.getOrLoad(`featured:public:${visibleOn.toLowerCase()}`, () => publicFeatured(visibleOn));
   response.json(ok(data));
@@ -151,21 +158,21 @@ const writeRow = async (id: string, body: JsonObject, existing?: FeaturedRow): P
 
 contentRouter.post("/featured-rows", ...superAdmin, validateBody(objectInput), asyncRoute(async (request, response) => {
   const saved = await writeRow(randomUUID(), request.body as JsonObject);
-  publicCache.clear("featured"); response.status(201).json(created(mapFeaturedRow(saved)));
+  await invalidateFeatured(); response.status(201).json(created(mapFeaturedRow(saved)));
 }));
 contentRouter.put("/featured-rows/:rowId", ...superAdmin, validateBody(objectInput), asyncRoute(async (request, response) => {
   const existing = await findRow(param(request.params.rowId)); const saved = await writeRow(existing.id, request.body as JsonObject, existing);
-  publicCache.clear("featured"); response.json(ok(mapFeaturedRow(saved)));
+  await invalidateFeatured(); response.json(ok(mapFeaturedRow(saved)));
 }));
 contentRouter.post("/featured-rows/order", ...superAdmin, validateBody(orderInput), asyncRoute(async (request, response) => {
   for (const item of request.body as z.infer<typeof orderInput>) { const row = await findRow(item.rowId || item.id || ""); const sequence = integerValue(item.sequence); if (sequence !== null) await queryOne("UPDATE featured_rows SET sequence=$1,updated_at=NOW() WHERE id=$2", [sequence, row.id]); }
-  publicCache.clear("featured"); response.json(message("Featured row order saved"));
+  await invalidateFeatured(); response.json(message("Featured row order saved"));
 }));
-contentRouter.delete("/featured-rows/:rowId", ...superAdmin, asyncRoute(async (request, response) => { const row = await findRow(param(request.params.rowId)); await queryOne("DELETE FROM featured_rows WHERE id=$1", [row.id]); publicCache.clear("featured"); response.json(message("Featured row deleted")); }));
+contentRouter.delete("/featured-rows/:rowId", ...superAdmin, asyncRoute(async (request, response) => { const row = await findRow(param(request.params.rowId)); await queryOne("DELETE FROM featured_rows WHERE id=$1", [row.id]); await invalidateFeatured(); response.json(message("Featured row deleted")); }));
 
 const heroes = async (publicOnly = false): Promise<HeroRow[]> => query<HeroRow>(`SELECT * FROM hero_slider_images WHERE deleted=FALSE ${publicOnly ? "AND active=TRUE" : ""} ORDER BY sequence`);
 contentRouter.get("/hero-sliders", ...adminRead, asyncRoute(async (_request, response) => response.json(ok((await heroes()).map(mapHero)))));
-contentRouter.get("/hero-sliders/public", asyncRoute(async (_request, response) => response.json(ok(await publicCache.getOrLoad("content:hero", async () => (await heroes(true)).map(mapHero))))));
+contentRouter.get("/hero-sliders/public", publicCdnCache(publicCdnPolicies.homepage, ["homepage", "hero"]), asyncRoute(async (_request, response) => response.json(ok(await publicCache.getOrLoad("content:hero", async () => (await heroes(true)).map(mapHero))))));
 const findHero = async (value: string): Promise<HeroRow> => { const hero = await queryOne<HeroRow>("SELECT * FROM hero_slider_images WHERE deleted=FALSE AND (image_id ILIKE $1 OR id::text=$1)", [value]); if (!hero) throw notFound("Hero image not found"); return hero; };
 const writeHero = async (id: string, body: JsonObject, existing?: HeroRow): Promise<HeroRow> => {
   const imageId = firstString(body, "imageId", "id") || existing?.image_id || `HERO${Date.now()}`; const title = firstString(body, "title") || existing?.title || imageId;
@@ -176,15 +183,15 @@ const writeHero = async (id: string, body: JsonObject, existing?: HeroRow): Prom
   else await queryOne("INSERT INTO hero_slider_images (id,created_at,updated_at,deleted,image_id,title,subtitle,image_url,link_url,active,sequence) VALUES ($1,NOW(),NOW(),FALSE,$2,$3,$4,$5,$6,$7,$8)", [id,imageId,title,subtitle,imageUrl,linkUrl,active,sequence]);
   return findHero(id);
 };
-contentRouter.post("/hero-sliders", ...superAdmin, validateBody(objectInput), asyncRoute(async (request,response) => { const hero=await writeHero(randomUUID(),request.body as JsonObject);publicCache.clear("content");response.status(201).json(created(mapHero(hero))); }));
-contentRouter.put("/hero-sliders/:imageId", ...superAdmin, validateBody(objectInput), asyncRoute(async (request,response) => { const old=await findHero(param(request.params.imageId));const hero=await writeHero(old.id,request.body as JsonObject,old);publicCache.clear("content");response.json(ok(mapHero(hero))); }));
-contentRouter.delete("/hero-sliders/:imageId", ...superAdmin, asyncRoute(async (request,response) => {const hero=await findHero(param(request.params.imageId));await queryOne("DELETE FROM hero_slider_images WHERE id=$1",[hero.id]);publicCache.clear("content");response.json(message("Hero slider image deleted"));}));
+contentRouter.post("/hero-sliders", ...superAdmin, validateBody(objectInput), asyncRoute(async (request,response) => { const hero=await writeHero(randomUUID(),request.body as JsonObject);await invalidateHomepage("hero");response.status(201).json(created(mapHero(hero))); }));
+contentRouter.put("/hero-sliders/:imageId", ...superAdmin, validateBody(objectInput), asyncRoute(async (request,response) => { const old=await findHero(param(request.params.imageId));const hero=await writeHero(old.id,request.body as JsonObject,old);await invalidateHomepage("hero");response.json(ok(mapHero(hero))); }));
+contentRouter.delete("/hero-sliders/:imageId", ...superAdmin, asyncRoute(async (request,response) => {const hero=await findHero(param(request.params.imageId));await queryOne("DELETE FROM hero_slider_images WHERE id=$1",[hero.id]);await invalidateHomepage("hero");response.json(message("Hero slider image deleted"));}));
 
 const statistics = async (publicOnly = false): Promise<StatRow[]> => query<StatRow>(`SELECT * FROM homepage_statistics WHERE deleted=FALSE ${publicOnly ? "AND active=TRUE" : ""} ORDER BY display_order`);
 contentRouter.get("/homepage-statistics", ...adminRead, asyncRoute(async (_request,response)=>response.json(ok((await statistics()).map(mapStat)))));
-contentRouter.get("/homepage-statistics/public", asyncRoute(async (_request,response)=>response.json(ok(await publicCache.getOrLoad("content:statistics",async()=> (await statistics(true)).map(mapStat))))));
+contentRouter.get("/homepage-statistics/public", publicCdnCache(publicCdnPolicies.homepage, ["homepage", "statistics"]), asyncRoute(async (_request,response)=>response.json(ok(await publicCache.getOrLoad("content:statistics",async()=> (await statistics(true)).map(mapStat))))));
 const findStat = async (id:string):Promise<StatRow>=>{const stat=await queryOne<StatRow>("SELECT * FROM homepage_statistics WHERE id=$1 AND deleted=FALSE",[id]);if(!stat)throw notFound("Homepage statistic not found");return stat;};
 const writeStat = async(id:string,body:JsonObject,existing?:StatRow):Promise<StatRow>=>{const title=firstString(body,"title","statisticTitle")||existing?.title||"";const value=firstString(body,"value","statisticValue","count")||existing?.value||"";const displayOrder=integerValue(body.displayOrder??body.sequence)??existing?.display_order??0;if(!title)throw badRequest("Statistic title is required");if(!value)throw badRequest("Statistic value is required");if(displayOrder<1)throw badRequest("Display order must be at least 1");const active=body.active===undefined?(body.status===undefined?existing?.active??true:firstString(body,"status").toLowerCase()==="active"):booleanValue(body.active);if(existing)await queryOne("UPDATE homepage_statistics SET title=$1,value=$2,display_order=$3,active=$4,updated_at=NOW() WHERE id=$5",[title,value,displayOrder,active,id]);else await queryOne("INSERT INTO homepage_statistics (id,created_at,updated_at,deleted,title,value,display_order,active) VALUES ($1,NOW(),NOW(),FALSE,$2,$3,$4,$5)",[id,title,value,displayOrder,active]);return findStat(id);};
-contentRouter.post("/homepage-statistics",...superAdmin,validateBody(objectInput),asyncRoute(async(request,response)=>{const stat=await writeStat(randomUUID(),request.body as JsonObject);publicCache.clear("content");response.status(201).json(created(mapStat(stat)));}));
-contentRouter.put("/homepage-statistics/:id",...superAdmin,validateBody(objectInput),asyncRoute(async(request,response)=>{const old=await findStat(param(request.params.id));const stat=await writeStat(old.id,request.body as JsonObject,old);publicCache.clear("content");response.json(ok(mapStat(stat)));}));
-contentRouter.delete("/homepage-statistics/:id",...superAdmin,asyncRoute(async(request,response)=>{const stat=await findStat(param(request.params.id));await queryOne("DELETE FROM homepage_statistics WHERE id=$1",[stat.id]);publicCache.clear("content");response.json(message("Homepage statistic deleted"));}));
+contentRouter.post("/homepage-statistics",...superAdmin,validateBody(objectInput),asyncRoute(async(request,response)=>{const stat=await writeStat(randomUUID(),request.body as JsonObject);await invalidateHomepage("statistics");response.status(201).json(created(mapStat(stat)));}));
+contentRouter.put("/homepage-statistics/:id",...superAdmin,validateBody(objectInput),asyncRoute(async(request,response)=>{const old=await findStat(param(request.params.id));const stat=await writeStat(old.id,request.body as JsonObject,old);await invalidateHomepage("statistics");response.json(ok(mapStat(stat)));}));
+contentRouter.delete("/homepage-statistics/:id",...superAdmin,asyncRoute(async(request,response)=>{const stat=await findStat(param(request.params.id));await queryOne("DELETE FROM homepage_statistics WHERE id=$1",[stat.id]);await invalidateHomepage("statistics");response.json(message("Homepage statistic deleted"));}));

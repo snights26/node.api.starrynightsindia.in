@@ -6,6 +6,7 @@ import { asyncRoute, conflict, created, message, notFound, ok, validateBody } fr
 import { authenticate, requireRole } from "../../lib/auth.js";
 import { booleanValue, firstString, integerValue, objectList, optionalString, parseJsonList, stringList, type JsonObject } from "../../lib/values.js";
 import { publicCache } from "../../services/public-cache.js";
+import { cacheTag, invalidatePublicCache, publicCdnCache, publicCdnPolicies } from "../../services/public-cdn-cache.js";
 import { mapCategory, mapPackageDetail, mapPackageSummary } from "./mapper.js";
 import { categoryByCode, categoryTreeRows, itineraryForPackage, listCategories, listPackages, packageByIdentifier, replacePackageRelations } from "./repository.js";
 import type { CategoryRow, PackageRow } from "./types.js";
@@ -53,20 +54,27 @@ const cacheResponse = async <T>(key: string, response: import("express").Respons
   response.json(ok(data));
 };
 
-catalogRouter.get("/categories", asyncRoute(async (_request, response) => {
+const invalidateCatalog = async (...tags: string[]): Promise<void> => {
+  await invalidatePublicCache({
+    memoryGroups: ["catalog", "featured"],
+    tags: ["catalog", "packages", "categories", "featured", "homepage", ...tags],
+  });
+};
+
+catalogRouter.get("/categories", publicCdnCache(publicCdnPolicies.categories, ["catalog", "categories"]), asyncRoute(async (_request, response) => {
   await cacheResponse("catalog:categories", response, async () => (await listCategories()).map(mapCategory));
 }));
 
-catalogRouter.get("/categories/tree", asyncRoute(async (_request, response) => {
+catalogRouter.get("/categories/tree", publicCdnCache(publicCdnPolicies.categories, ["catalog", "categories"]), asyncRoute(async (_request, response) => {
   await cacheResponse("catalog:category-tree", response, async () => categoryTree(await categoryTreeRows()));
 }));
 
-catalogRouter.get("/categories/:code", asyncRoute(async (request, response) => {
+catalogRouter.get("/categories/:code", publicCdnCache(publicCdnPolicies.categories, (request) => ["catalog", "categories", cacheTag("category", param(request.params.code))]), asyncRoute(async (request, response) => {
   const code = param(request.params.code);
   await cacheResponse(`catalog:category:${code.toLowerCase()}`, response, async () => mapCategory(await categoryByCode(code)));
 }));
 
-catalogRouter.get("/categories/:code/packages", asyncRoute(async (request, response) => {
+catalogRouter.get("/categories/:code/packages", publicCdnCache(publicCdnPolicies.categories, (request) => ["catalog", "categories", "packages", cacheTag("category", param(request.params.code))]), asyncRoute(async (request, response) => {
   const code = param(request.params.code);
   await cacheResponse(`catalog:packages:category:${code.toLowerCase()}`, response, async () => {
     await categoryByCode(code);
@@ -74,7 +82,10 @@ catalogRouter.get("/categories/:code/packages", asyncRoute(async (request, respo
   });
 }));
 
-catalogRouter.get("/packages", asyncRoute(async (request, response) => {
+catalogRouter.get("/packages", publicCdnCache(publicCdnPolicies.packages, (request) => {
+  const rowId = typeof request.query.rowId === "string" ? request.query.rowId : undefined;
+  return rowId ? ["catalog", "packages", "featured", "homepage", cacheTag("featured-row", rowId)] : ["catalog", "packages"];
+}), asyncRoute(async (request, response) => {
   const category = typeof request.query.category === "string" ? request.query.category : typeof request.query.regionCode === "string" ? request.query.regionCode : undefined;
   const brand = typeof request.query.brand === "string" ? request.query.brand : undefined;
   const rowId = typeof request.query.rowId === "string" ? request.query.rowId : undefined;
@@ -94,7 +105,7 @@ catalogRouter.get("/packages", asyncRoute(async (request, response) => {
   await cacheResponse(cacheKey, response, async () => (await listPackages({ category, brand })).map(mapPackageSummary));
 }));
 
-catalogRouter.get("/packages/:code", asyncRoute(async (request, response) => {
+catalogRouter.get("/packages/:code", publicCdnCache(publicCdnPolicies.packageDetail, (request) => ["catalog", "packages", cacheTag("package", param(request.params.code))]), asyncRoute(async (request, response) => {
   const pkg = await packageByIdentifier(param(request.params.code));
   const itinerary = await itineraryForPackage(pkg.id);
   const configuredRelated = parseJsonList(pkg.related_package_codes_json);
@@ -123,7 +134,7 @@ catalogRouter.post("/categories", ...superAdmin, validateBody(categoryInput), as
   if (!row) throw new Error("Category could not be created");
   row.parent_code = parent?.code ?? null;
   row.parent_name = parent?.name ?? null;
-  publicCache.clear("catalog");
+  await invalidateCatalog(cacheTag("category", row.code));
   response.status(201).json(created(mapCategory(row)));
 }));
 
@@ -143,7 +154,7 @@ catalogRouter.put("/categories/:code", ...superAdmin, validateBody(categoryInput
   if (!row) throw notFound("Category not found");
   row.parent_code = parent?.code ?? null;
   row.parent_name = parent?.name ?? null;
-  publicCache.clear("catalog");
+  await invalidateCatalog(cacheTag("category", original.code), cacheTag("category", row.code));
   response.json(ok(mapCategory(row)));
 }));
 
@@ -152,7 +163,7 @@ catalogRouter.delete("/categories/:code", ...superAdmin, asyncRoute(async (reque
   const child = await queryOne<{ id: string }>("SELECT id FROM categories WHERE parent_id = $1 AND deleted = FALSE LIMIT 1", [category.id]);
   if (child) throw conflict("Delete or reassign child categories before permanently deleting this category");
   await queryOne("DELETE FROM categories WHERE id = $1", [category.id]);
-  publicCache.clear("catalog");
+  await invalidateCatalog(cacheTag("category", category.code));
   response.json(message("Category deleted"));
 }));
 
@@ -160,7 +171,7 @@ catalogRouter.post("/categories/:code/packages/:packageCode", ...superAdmin, asy
   const category = await categoryByCode(param(request.params.code));
   const pkg = await packageByIdentifier(param(request.params.packageCode));
   await queryOne("INSERT INTO package_categories (package_id, category_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [pkg.id, category.id]);
-  publicCache.clear("catalog");
+  await invalidateCatalog(cacheTag("category", category.code), cacheTag("package", pkg.package_code));
   response.json(ok((await listPackages({ category: category.code })).map(mapPackageSummary)));
 }));
 
@@ -168,7 +179,7 @@ catalogRouter.delete("/categories/:code/packages/:packageCode", ...superAdmin, a
   const category = await categoryByCode(param(request.params.code));
   const pkg = await packageByIdentifier(param(request.params.packageCode));
   await queryOne("DELETE FROM package_categories WHERE package_id = $1 AND category_id = $2", [pkg.id, category.id]);
-  publicCache.clear("catalog");
+  await invalidateCatalog(cacheTag("category", category.code), cacheTag("package", pkg.package_code));
   response.json(ok((await listPackages({ category: category.code })).map(mapPackageSummary)));
 }));
 
@@ -201,7 +212,7 @@ catalogRouter.post("/packages", ...superAdmin, validateBody(packageInput), async
     );
     await replacePackageRelations(client, id, payload.categories, payload.itinerary);
   });
-  publicCache.clear("catalog");
+  await invalidateCatalog(cacheTag("package", payload.code));
   const saved = await packageByIdentifier(id);
   response.status(201).json(created(mapPackageDetail(saved, await itineraryForPackage(id), [])));
 }));
@@ -218,7 +229,7 @@ catalogRouter.put("/packages/:code", ...superAdmin, validateBody(packageInput), 
     );
     await replacePackageRelations(client, existing.id, payload.categories, payload.itinerary);
   });
-  publicCache.clear("catalog");
+  await invalidateCatalog(cacheTag("package", existing.package_code), cacheTag("package", payload.code));
   const saved = await packageByIdentifier(existing.id);
   response.json(ok(mapPackageDetail(saved, await itineraryForPackage(existing.id), [])));
 }));
@@ -232,6 +243,6 @@ catalogRouter.delete("/packages/:code", ...superAdmin, asyncRoute(async (request
     await client.query("DELETE FROM featured_row_items WHERE LOWER(item_code) = LOWER($1)", [pkg.package_code]);
     await client.query("DELETE FROM travel_packages WHERE id = $1", [pkg.id]);
   });
-  publicCache.clear("catalog");
+  await invalidateCatalog(cacheTag("package", pkg.package_code));
   response.json(message("Package deleted"));
 }));

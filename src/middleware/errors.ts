@@ -3,12 +3,14 @@ import type { DatabaseError } from "pg";
 import multer from "multer";
 import { AppError } from "../lib/api.js";
 import { isProduction } from "../config/env.js";
+import { applyNoStore } from "../services/public-cdn-cache.js";
 
 export const notFoundHandler: RequestHandler = (request, response) => {
   response.status(404).json({ success: false, message: `No endpoint for ${request.method} ${request.path}`, data: null });
 };
 
 export const errorHandler: ErrorRequestHandler = (error: unknown, request, response, _next) => {
+  applyNoStore(response);
   request.log?.error({ err: error, status: error instanceof AppError ? error.status : 500 }, "request failed");
   if (error instanceof AppError) {
     response.status(error.status).json({ success: false, message: error.message, data: error.details ?? null });
