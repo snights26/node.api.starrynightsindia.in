@@ -63,10 +63,10 @@ explicitly application staging and is guarded by `DEPLOYMENT_ENVIRONMENT` and
 | --- | --- | --- | --- |
 | Existing Cloudinary URLs/assets | `ENABLED` | Existing URLs remain untouched; no migration is performed. | None. |
 | New Cloudinary uploads | `DISABLED` | Health reports Cloudinary disabled. | A staging-scoped account/credentials and approved staging folder prefix. |
-| Private Vercel Blob store | `ENABLED` | Isolated private staging store is connected only to the API project's application-staging target. A disposable direct upload/finalize/cleanup lifecycle passed without a database write. | Customer-owner acceptance still needs an authenticated fixture. |
+| Private Vercel Blob store | `ENABLED` | Isolated private staging store is connected only to the API project's application-staging target. A disposable direct upload/presign/PUT/finalize/cleanup lifecycle returned `200/200/200/502/404`: the disabled-mail failure created no database record and the retry proved deletion. | Customer-owner acceptance still needs an authenticated fixture. |
 | Blob OIDC | `ENABLED` | Deployed Function successfully issued scoped upload/read/delete authorization. Local Development OIDC is correctly denied for the Production-scoped application-staging store. | None for server runtime. |
 | Client direct upload authorization | `ENABLED` | Opaque signed intent constrains pathname, owner, type, and size; a scoped PUT URL bypasses Functions and needs no Blob callback/webhook key. | Native authenticated acceptance. |
-| Private signed download/delete | `ENABLED` | Server generated a short-lived private download authorization during the disposable finalization and cleaned the object after disabled-mail failure. | Customer-owner acceptance. |
+| Private signed download/delete | `ENABLED` | Server generated a short-lived private download authorization during the disposable finalization and cleaned the object after disabled-mail failure; Blob 404 responses now normalize to the API 404 contract. | Customer-owner acceptance. |
 | Mobile travel photos (25 MB) | `PARTIALLY CONFIGURED` | Direct private Blob flow supports JPEG/PNG/WebP and avoids Vercel Function binary limits. | Native Google sign-in or safe user fixture. |
 | Career resumes | `PARTIALLY CONFIGURED` | Private direct upload/finalize, admin-only read, and cleanup are implemented. | Safe staging applicant fixture and safe HR recipient if email delivery is enabled. |
 | Quotations/notification PDFs | `PARTIALLY CONFIGURED` | Private direct Blob transport is implemented; quotations clean up temporary objects. | Admin fixture plus safe SMTP. |
@@ -108,6 +108,19 @@ explicitly application staging and is guarded by `DEPLOYMENT_ENVIRONMENT` and
   never receives database, JWT, SMTP, Cloudinary, Blob, or Razorpay secrets.
 - Local `.env.local`, `.vercel/`, build output, logs, upload archives, and
   dependency folders are ignored. No legacy archive is in Git.
+
+## Latest safe verification
+
+| Check | Result |
+| --- | --- |
+| API health | `200`; database `UP`; explicit runtime labels remain `staging` / `staging`; Google, SMTP, Cloudinary, and Razorpay remain disabled; durable storage is enabled. |
+| CORS | Public and admin Vercel origins each receive their own allowed origin with `Vary: Origin`; an unrelated origin receives `403`. |
+| Public API/cache | Packages, categories, hero, featured rows, statistics, gallery, and public notifications return successful envelopes. The packages request was served as a Vercel CDN `HIT` (with `Age`); browser JSON remains conservative (`must-revalidate`, `max-age=0`). |
+| Private API/cache | Anonymous `/users/me` returns `401`; private and write paths remain `private, no-store`. |
+| API static checks | `npm run typecheck`, `npm run build`, and `npm test` pass (eight tests). |
+| Public client static checks | Production build passes. Existing lint debt remains: 10 errors and 5 warnings, unrelated to this pass. |
+| Admin client static checks | Production build passes. Existing lint debt remains: 15 errors and 6 warnings, unrelated to this pass. |
+| Mobile static checks | Typecheck, lint, Expo public config, and Android JS export passed before the current EAS preview build. Expo Doctor remains host/network-blocked rather than a project failure. |
 
 ## Deliberately deferred actions
 
