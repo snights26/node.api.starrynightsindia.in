@@ -393,8 +393,11 @@ export class StorageService {
     try {
       return await this.driver.head(identifier, this.commandOptions(access));
     } catch (error) {
-      const status = (error as { status?: number }).status;
-      if (status === 404 || (error instanceof Error && /not found/i.test(error.message))) throw notFound("Stored file was not found");
+      const providerError = error as { status?: number; statusCode?: number; name?: string };
+      const status = providerError.status ?? providerError.statusCode;
+      if (status === 404 || providerError.name === "BlobNotFoundError" || (error instanceof Error && /not found|does not exist/i.test(error.message))) {
+        throw notFound("Stored file was not found");
+      }
       throw new AppError(503, "Object storage is currently unavailable");
     }
   }

@@ -67,6 +67,16 @@ test("upload finalization enforces signed ownership, pathname, type, and size", 
   const deletingService = new storage.StorageService(deletingDriver as never, process.env.JWT_SECRET);
   await deletingService.deleteObject(object.reference, "private");
   assert.equal(deleted, true);
+
+  const missingDriver = {
+    ...driver,
+    head: async () => {
+      const error = Object.assign(new Error("object does not exist"), { statusCode: 404, name: "BlobNotFoundError" });
+      throw error;
+    },
+  };
+  const missingService = new storage.StorageService(missingDriver as never, process.env.JWT_SECRET);
+  assert.equal(await missingService.objectExists(object.reference, "private"), false);
 });
 
 test("Razorpay webhook verifies the unmodified raw request body and protected upload routes reject guests", async () => {

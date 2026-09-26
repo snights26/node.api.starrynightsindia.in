@@ -63,10 +63,10 @@ explicitly application staging and is guarded by `DEPLOYMENT_ENVIRONMENT` and
 | --- | --- | --- | --- |
 | Existing Cloudinary URLs/assets | `ENABLED` | Existing URLs remain untouched; no migration is performed. | None. |
 | New Cloudinary uploads | `DISABLED` | Health reports Cloudinary disabled. | A staging-scoped account/credentials and approved staging folder prefix. |
-| Private Vercel Blob store | `PARTIALLY CONFIGURED` | Isolated private staging store is connected only to the API project's application-staging target. Code now uses standard/neutral Blob store variables and prefers OIDC. | Deploy source update, then authenticated fixture upload/finalize/download/delete check. |
-| Blob OIDC | `PARTIALLY CONFIGURED` | Vercel issues Function OIDC; local Development OIDC is correctly denied for the Production-scoped application-staging store. | Verify from deployed Function; do not pull production secrets locally. |
-| Client direct upload authorization | `PARTIALLY CONFIGURED` | Opaque signed intent constrains pathname, owner, type, and size; a scoped PUT URL bypasses Functions and needs no Blob callback/webhook key. | Approved authenticated fixture. |
-| Private signed download/delete | `PARTIALLY CONFIGURED` | Server generates short-lived scoped reads and authorizes ownership/admin access before deletion. | Authenticated fixture E2E. |
+| Private Vercel Blob store | `ENABLED` | Isolated private staging store is connected only to the API project's application-staging target. A disposable direct upload/finalize/cleanup lifecycle passed without a database write. | Customer-owner acceptance still needs an authenticated fixture. |
+| Blob OIDC | `ENABLED` | Deployed Function successfully issued scoped upload/read/delete authorization. Local Development OIDC is correctly denied for the Production-scoped application-staging store. | None for server runtime. |
+| Client direct upload authorization | `ENABLED` | Opaque signed intent constrains pathname, owner, type, and size; a scoped PUT URL bypasses Functions and needs no Blob callback/webhook key. | Native authenticated acceptance. |
+| Private signed download/delete | `ENABLED` | Server generated a short-lived private download authorization during the disposable finalization and cleaned the object after disabled-mail failure. | Customer-owner acceptance. |
 | Mobile travel photos (25 MB) | `PARTIALLY CONFIGURED` | Direct private Blob flow supports JPEG/PNG/WebP and avoids Vercel Function binary limits. | Native Google sign-in or safe user fixture. |
 | Career resumes | `PARTIALLY CONFIGURED` | Private direct upload/finalize, admin-only read, and cleanup are implemented. | Safe staging applicant fixture and safe HR recipient if email delivery is enabled. |
 | Quotations/notification PDFs | `PARTIALLY CONFIGURED` | Private direct Blob transport is implemented; quotations clean up temporary objects. | Admin fixture plus safe SMTP. |
