@@ -1,6 +1,6 @@
 import express from "express";
 import cors from "cors";
-import helmet from "helmet";
+import * as helmetModule from "helmet";
 import { rateLimit } from "express-rate-limit";
 import { pinoHttp } from "pino-http";
 import swaggerUi from "swagger-ui-express";
@@ -24,6 +24,8 @@ import { supportRouter } from "./modules/support/routes.js";
 import { usersRouter } from "./modules/users/routes.js";
 import { storageRouter } from "./modules/storage/routes.js";
 import { legacyUploadRouter } from "./modules/storage/legacy-routes.js";
+
+const helmet = helmetModule.default;
 
 assertRuntimeConfiguration();
 export const app = express();
