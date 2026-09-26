@@ -101,9 +101,6 @@ export const env = {
     namespace: storageNamespace,
     privateStoreId: privateBlobStoreId,
     publicStoreId: publicBlobStoreId,
-    // Added by a connected Blob store. It is a public verification key, not a
-    // credential, but `handleUploadPresigned` requires it for callback safety.
-    webhookPublicKey: process.env.BLOB_WEBHOOK_PUBLIC_KEY?.trim() || undefined,
     // Local migration/testing may use scoped Vercel Blob tokens. Production
     // Vercel Functions use short-lived platform OIDC credentials instead.
     privateReadWriteToken: privateBlobReadWriteToken,

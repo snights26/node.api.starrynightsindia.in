@@ -1,16 +1,15 @@
 import { randomUUID } from "node:crypto";
-import type { IncomingMessage } from "node:http";
 import jwt from "jsonwebtoken";
 import {
   del,
   head,
   issueSignedToken,
+  parseStoreIdFromDelegationToken,
   presignUrl,
   put,
   type HeadBlobResult,
   type PutBlobResult,
 } from "@vercel/blob";
-import { handleUploadPresigned, type HandleUploadPresignedBody } from "@vercel/blob/client";
 import { env } from "../config/env.js";
 import { AppError, badRequest, notFound } from "../lib/api.js";
 
@@ -49,6 +48,14 @@ export type UploadAuthorization = {
   maximumSizeInBytes: number;
   allowedContentTypes: readonly string[];
   multipartRecommended: boolean;
+};
+
+export type PresignedUpload = {
+  /** Short-lived, pathname-scoped Blob PUT URL; never a store credential. */
+  uploadUrl: string;
+  pathname: string;
+  contentType: string;
+  headers: Record<string, string>;
 };
 
 export type CreateUploadAuthorizationInput = {
@@ -208,40 +215,43 @@ export class StorageService {
   }
 
   /**
-   * Handles the small authorization exchange used by direct Blob clients. The
-   * file itself goes from the client to Blob and never through Express.
+   * Issues one short-lived, constrained PUT URL. Blob does not call back into
+   * this Function, so this flow needs neither a webhook key nor a Function
+   * binary relay; finalization still HEAD-verifies the uploaded object.
    */
-  public async createPresignedUpload(request: IncomingMessage, body: HandleUploadPresignedBody, actorId?: string): Promise<unknown> {
-    if (!this.codec) throw missingStorage();
-    if (!env.storage.webhookPublicKey) throw missingStorage();
-    return handleUploadPresigned({
-      request,
-      body,
-      webhookPublicKey: env.storage.webhookPublicKey,
-      getSignedToken: async (pathname, clientPayload) => {
-        const claims = this.verifyIntent(clientPayload, actorId);
-        if (claims.pathname !== pathname) throw badRequest("Upload pathname does not match its authorization");
-        if (!this.isConfigured(claims.access)) throw missingStorage();
-        const signedToken = await this.driver.issueSignedToken({
-          ...this.commandOptions(claims.access),
-          pathname,
-          operations: ["put"],
-          validUntil: Date.now() + env.storage.uploadIntentMinutes * 60_000,
-          allowedContentTypes: [claims.contentType],
-          maximumSizeInBytes: claims.maxSize,
-        });
-        return {
-          token: signedToken,
-          urlOptions: {
-            validUntil: signedToken.validUntil,
-            allowedContentTypes: [claims.contentType],
-            maximumSizeInBytes: claims.maxSize,
-            allowOverwrite: false,
-            addRandomSuffix: false,
-          },
-        };
-      },
+  public async createPresignedUpload(intent: string | null, actorId?: string): Promise<PresignedUpload> {
+    const claims = this.verifyIntent(intent, actorId);
+    if (!this.isConfigured(claims.access)) throw missingStorage();
+    const signedToken = await this.driver.issueSignedToken({
+      ...this.commandOptions(claims.access),
+      pathname: claims.pathname,
+      operations: ["put"],
+      validUntil: Date.now() + env.storage.uploadIntentMinutes * 60_000,
+      allowedContentTypes: [claims.contentType],
+      maximumSizeInBytes: claims.maxSize,
     });
+    const result = await this.driver.presignUrl(signedToken, {
+      operation: "put",
+      pathname: claims.pathname,
+      validUntil: signedToken.validUntil,
+      allowedContentTypes: [claims.contentType],
+      maximumSizeInBytes: claims.maxSize,
+      allowOverwrite: false,
+      addRandomSuffix: false,
+      access: claims.access,
+    });
+    const storeId = parseStoreIdFromDelegationToken(signedToken.delegationToken).replace(/^store_/, "");
+    return {
+      uploadUrl: result.presignedUrl,
+      pathname: claims.pathname,
+      contentType: claims.contentType,
+      headers: {
+        "x-api-version": "12",
+        "x-vercel-blob-store-id": storeId,
+        "x-vercel-blob-access": claims.access,
+        "x-content-type": claims.contentType,
+      },
+    };
   }
 
   public async finalizeUpload(intent: string, objectUrl: string, actorId?: string, expectedPurpose?: StoragePurpose): Promise<StorageObject> {

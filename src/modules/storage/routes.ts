@@ -10,6 +10,9 @@ import { storageService } from "../../services/blob-storage.js";
 export const storageRouter = Router();
 
 storageRouter.post("/storage/uploads/presign", asyncRoute(async (request, response) => {
-  const result = await storageService.createPresignedUpload(request, request.body, request.auth?.id);
+  const intent = request.body && typeof request.body === "object" && "intent" in request.body && typeof request.body.intent === "string"
+    ? request.body.intent
+    : null;
+  const result = await storageService.createPresignedUpload(intent, request.auth?.id);
   response.status(200).json(result);
 }));

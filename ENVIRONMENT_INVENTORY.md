@@ -74,7 +74,6 @@ means a dedicated staging value/account still has to be supplied.
 | `BLOB_STORE_ID` | Optional official single-store fallback | Non-secret server config | isolated private store | Uses the Vercel Blob integration's standard selected-store name. | Used only if `BLOB_PRIVATE_STORE_ID` is absent. |
 | `BLOB_PRIVATE_STORE_ID` | Required for private Blob | Non-secret server config | separate staging/production store | Selects private Blob storage for Vercel OIDC. | External setup pending. |
 | `BLOB_PUBLIC_STORE_ID` | Required for public Blob only | Non-secret server config | separate staging/production store | Selects intentional public direct-media storage for Vercel OIDC. | Not required while public media stays on Cloudinary. |
-| `BLOB_WEBHOOK_PUBLIC_KEY` | Required for presigned direct uploads | Public server config | Vercel-generated per connected store/project | Verifies Vercel Blob upload callbacks and is required by `handleUploadPresigned`. | External setup pending; this is not a secret. |
 | `BLOB_READ_WRITE_TOKEN` / `BLOB_*_READ_WRITE_TOKEN` | Local migration only | Secret | never client/never Git | Scoped CLI credential fallback; Vercel Functions prefer OIDC when a store ID is configured. | Must not be set in mobile/frontend. |
 | `MAIL_DELIVERY_MODE` | Required for staging | Operational safety | `safe` or `disabled` in staging | Suppresses mail outside explicit safe recipients. | New Vercel gate. |
 | `SMTP_SAFE_RECIPIENTS` | Required for safe mode | Operational identity | dedicated staging recipients | Only addresses permitted when safe delivery is enabled. | External setup pending. |
@@ -86,7 +85,7 @@ means a dedicated staging value/account still has to be supplied.
 ## Vercel Blob and deployment placement rules
 
 - `BLOB_STORE_ID`, `BLOB_PRIVATE_STORE_ID`, `BLOB_PUBLIC_STORE_ID`,
-  `BLOB_WEBHOOK_PUBLIC_KEY`, `STORAGE_NAMESPACE`, limits, and deployment labels are server configuration,
+  `STORAGE_NAMESPACE`, limits, and deployment labels are server configuration,
   not mobile/client environment variables.
 - A connected Blob store supplies `BLOB_STORE_ID` and a Function receives
   `VERCEL_OIDC_TOKEN` automatically. This project maps distinct private/public

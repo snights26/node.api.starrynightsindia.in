@@ -46,10 +46,11 @@ API    -> writes business record or sends authorized email
 ```
 
 The opaque intent is not a Blob credential. Server-side `@vercel/blob`
-`handleUploadPresigned`, `issueSignedToken`, and `presignUrl` are isolated in
-`StorageService`; they constrain one pathname, MIME type, size, expiry, and
-overwrite behavior. The Expo app implements the documented presigned PUT
-protocol with native `fetch`, rather than bundling the Node-oriented Blob SDK.
+`issueSignedToken` and `presignUrl` are isolated in `StorageService`; they
+constrain one pathname, MIME type, size, expiry, and overwrite behavior. There
+is no provider upload callback or webhook key. The Expo app performs the
+returned presigned PUT with native `fetch`, rather than bundling the
+Node-oriented Blob SDK.
 
 ### Direct flows
 
@@ -84,8 +85,8 @@ guidance. Product limits remain available through direct Blob, so photos remain
    public store only if a direct public-media flow is enabled; existing
    Cloudinary URLs remain the public-media system until then.
 2. Supply the selected store's non-secret `BLOB_PRIVATE_STORE_ID` (or official
-   `BLOB_STORE_ID`) and `BLOB_WEBHOOK_PUBLIC_KEY` to Functions. Vercel-managed
-   OIDC is preferred; keep read/write tokens only in a local migration shell.
+   `BLOB_STORE_ID`) to Functions. Vercel-managed OIDC is preferred; keep
+   read/write tokens only in a local migration shell.
 3. Use isolated namespaces such as `staging/starry-nights` and
    `production/starry-nights`.
 4. Move file callers to direct flows before sending more than 4 MB.

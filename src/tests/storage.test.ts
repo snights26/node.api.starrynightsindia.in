@@ -13,7 +13,6 @@ process.env.BLOB_PUBLIC_STORE_ID = "public-test-store";
 process.env.STORAGE_NAMESPACE = "staging/starry-nights";
 process.env.DEPLOYMENT_ENVIRONMENT = "local";
 process.env.RAZORPAY_WEBHOOK_SECRET = "w".repeat(32);
-process.env.BLOB_WEBHOOK_PUBLIC_KEY = "test-public-key";
 
 const storage = await import("../services/blob-storage.js");
 
@@ -42,7 +41,7 @@ test("upload finalization enforces signed ownership, pathname, type, and size", 
     head: async () => metadata,
     put: async () => ({ ...metadata }),
     del: async () => undefined,
-    issueSignedToken: async () => ({ delegationToken: "delegation", clientSigningToken: "signing", validUntil: Date.now() + 60_000 }),
+    issueSignedToken: async () => ({ delegationToken: `${Buffer.from(JSON.stringify({ storeId: "store_private-test-store" })).toString("base64url")}.signature`, clientSigningToken: "signing", validUntil: Date.now() + 60_000 }),
     presignUrl: async () => ({ presignedUrl: "https://private.blob.vercel-storage.com/signed" }),
   };
   const service = new storage.StorageService(driver as never, process.env.JWT_SECRET);
@@ -53,6 +52,11 @@ test("upload finalization enforces signed ownership, pathname, type, and size", 
   metadata.pathname = authorization.pathname;
   const object = await service.finalizeUpload(authorization.intent, metadata.url, "user-1", "travel-photo");
   assert.equal(object.reference, storage.PRIVATE_STORAGE_REFERENCE_PREFIX + encodeURIComponent(metadata.pathname));
+  const presigned = await service.createPresignedUpload(authorization.intent, "user-1");
+  assert.equal(presigned.pathname, authorization.pathname);
+  assert.equal(presigned.headers["x-vercel-blob-access"], "private");
+  assert.equal(presigned.headers["x-content-type"], "image/jpeg");
+  assert.match(presigned.uploadUrl, /^https:\/\//);
   await assert.rejects(service.finalizeUpload(authorization.intent, metadata.url, "user-2", "travel-photo"), /different user/);
   await assert.rejects(service.finalizeUpload(authorization.intent, metadata.url, "user-1", "quotation"), /invalid purpose/);
 
