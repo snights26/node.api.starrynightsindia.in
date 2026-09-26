@@ -30,6 +30,7 @@ explicitly application staging and is guarded by `DEPLOYMENT_ENVIRONMENT` and
 | Health and OpenAPI | `ENABLED` | `/api/health`, `/api/swagger`, and `/api/swagger-ui.html` are present; health is no-store. | None. |
 | Public CDN cache | `ENABLED` | Catalogue, homepage, gallery, and public notifications have CDN policy/tags; private and write paths are no-store. | Tag purge remains best-effort; TTL is the safe fallback. |
 | In-memory cache | `PARTIALLY CONFIGURED` | Per-instance optimization only; correctness is database-backed. | No distributed cache is required for this staging pass. |
+| Public browser IndexedDB cache | `PARTIALLY CONFIGURED` | The public client flag is present and the server-side `CACHE_ENABLED` gate is now enabled in application staging; the manifest confirms browser caching is enabled. | Set a deliberately chosen, shared non-secret `PUBLIC_BROWSER_CACHE_EPOCH` for cross-replica reuse. Without it, the implementation safely uses per-instance epochs and may discard more often. |
 | Semantic search flag | `NOT REQUIRED` | Compatibility flag exists but no Node semantic-search implementation consumes it. | Approved feature scope, if needed later. |
 
 ## Authentication and browser clients
@@ -116,7 +117,7 @@ explicitly application staging and is guarded by `DEPLOYMENT_ENVIRONMENT` and
 | --- | --- |
 | API health | `200`; database `UP`; explicit runtime labels remain `staging` / `staging`; Google, SMTP, Cloudinary, and Razorpay remain disabled; durable storage is enabled. |
 | CORS | Public and admin Vercel origins each receive their own allowed origin with `Vary: Origin`; an unrelated origin receives `403`. |
-| Public API/cache | Packages, categories, hero, featured rows, statistics, gallery, and public notifications return successful envelopes. The packages request was served as a Vercel CDN `HIT` (with `Age`); browser JSON remains conservative (`must-revalidate`, `max-age=0`). |
+| Public API/cache | Packages, categories, hero, featured rows, statistics, gallery, and public notifications return successful envelopes. The packages request was served as a Vercel CDN `HIT` (with `Age`); browser JSON remains conservative (`must-revalidate`, `max-age=0`). The API manifest now enables the optional browser cache gate. |
 | Private API/cache | Anonymous `/users/me` returns `401`; private and write paths remain `private, no-store`. |
 | API static checks | `npm run typecheck`, `npm run build`, and `npm test` pass (eight tests). |
 | Public client static checks | Production build passes. Existing lint debt remains: 10 errors and 5 warnings, unrelated to this pass. |
