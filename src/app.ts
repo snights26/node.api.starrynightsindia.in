@@ -1,6 +1,6 @@
 import express from "express";
 import cors from "cors";
-import { default as helmet } from "helmet";
+import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
 import { pinoHttp } from "pino-http";
 import swaggerUi from "swagger-ui-express";
