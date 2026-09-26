@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
-import helmet from "helmet";
-import rateLimit from "express-rate-limit";
+import { default as helmet } from "helmet";
+import { rateLimit } from "express-rate-limit";
 import { pinoHttp } from "pino-http";
 import swaggerUi from "swagger-ui-express";
 import { assertRuntimeConfiguration, env, isProduction } from "./config/env.js";
