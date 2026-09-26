@@ -63,10 +63,11 @@ explicitly application staging and is guarded by `DEPLOYMENT_ENVIRONMENT` and
 | --- | --- | --- | --- |
 | Existing Cloudinary URLs/assets | `ENABLED` | Existing URLs remain untouched; no migration is performed. | None. |
 | New Cloudinary uploads | `DISABLED` | Health reports Cloudinary disabled. | A staging-scoped account/credentials and approved staging folder prefix. |
-| Private Vercel Blob store | `ENABLED` | Isolated private staging store is connected only to the API project's application-staging target. A disposable direct upload/presign/PUT/finalize/cleanup lifecycle returned `200/200/200/502/404`: the disabled-mail failure created no database record and the retry proved deletion. | Customer-owner acceptance still needs an authenticated fixture. |
+| Private Vercel Blob store | `ENABLED` | Isolated private staging store is connected only to the API project's application-staging target. A disposable direct upload/presign/PUT/finalize/cleanup lifecycle returned `200/200/200/502/404`: the disabled-mail failure created no database record and the retry proved deletion. An unsigned private URL was rejected with `403`. | Customer-owner acceptance still needs an authenticated fixture. |
 | Blob OIDC | `ENABLED` | Deployed Function successfully issued scoped upload/read/delete authorization. Local Development OIDC is correctly denied for the Production-scoped application-staging store. | None for server runtime. |
 | Client direct upload authorization | `ENABLED` | Opaque signed intent constrains pathname, owner, type, and size; a scoped PUT URL bypasses Functions and needs no Blob callback/webhook key. | Native authenticated acceptance. |
-| Private signed download/delete | `ENABLED` | Server generated a short-lived private download authorization during the disposable finalization and cleaned the object after disabled-mail failure; Blob 404 responses now normalize to the API 404 contract. | Customer-owner acceptance. |
+| Private signed download/delete | `PARTIALLY CONFIGURED` | Server generated a short-lived private download authorization during the disposable finalization and cleaned the object after disabled-mail failure; Blob 404 responses now normalize to the API 404 contract. An unsigned private URL is rejected with `403`. | Consume a signed URL through an authenticated staging customer/admin fixture. |
+| Disposable Blob test cleanup residual | `FAILED` | One 5-byte, non-personal staging test object may remain after a local test-helper error interrupted finalization. It has no database row and no email delivery. | Account owner must delete the single current object under the staging private career-resume prefix from the Blob dashboard; no broad deletion or legacy migration is authorized. |
 | Mobile travel photos (25 MB) | `PARTIALLY CONFIGURED` | Direct private Blob flow supports JPEG/PNG/WebP and avoids Vercel Function binary limits. | Native Google sign-in or safe user fixture. |
 | Career resumes | `PARTIALLY CONFIGURED` | Private direct upload/finalize, admin-only read, and cleanup are implemented. | Safe staging applicant fixture and safe HR recipient if email delivery is enabled. |
 | Quotations/notification PDFs | `PARTIALLY CONFIGURED` | Private direct Blob transport is implemented; quotations clean up temporary objects. | Admin fixture plus safe SMTP. |
@@ -88,7 +89,7 @@ explicitly application staging and is guarded by `DEPLOYMENT_ENVIRONMENT` and
 | Feature | Status | Evidence / current behavior | Remaining blocker |
 | --- | --- | --- | --- |
 | Central staging API base | `ENABLED` | Preview EAS environment contains only the staging API base; Axios/services use central config. | None. |
-| Expo/EAS project and preview APK | `ENABLED` | Project is linked; Android internal preview build `457a0b14-71cd-4ed4-a9b7-2d732bcb205d` finished successfully. | Physical-device install/acceptance. |
+| Expo/EAS project and preview APK | `ENABLED` | Project is linked; latest Android internal preview build `13b367f1-e78b-4740-bda3-39fb0351dd38` finished successfully from the scoped-Blob mobile source commit. Its Preview API configuration was verified to match the staging API and not mention production. | Physical-device install/acceptance. |
 | SecureStore, bootstrap, refresh, logout | `ENABLED` | Central auth provider and automatic single-refresh path are implemented. | Real Google identity for session E2E. |
 | Native Android/iOS Google login | `DISABLED` | App fails gracefully when native IDs are absent; anonymous flows remain available. | Platform OAuth clients. |
 | Anonymous discovery, search, gallery, enquiry, chatbot | `PARTIALLY CONFIGURED` | Typecheck/lint/config/export and staging API smoke passed. | Physical Android test and any valid-write test fixture. |
@@ -120,7 +121,7 @@ explicitly application staging and is guarded by `DEPLOYMENT_ENVIRONMENT` and
 | API static checks | `npm run typecheck`, `npm run build`, and `npm test` pass (eight tests). |
 | Public client static checks | Production build passes. Existing lint debt remains: 10 errors and 5 warnings, unrelated to this pass. |
 | Admin client static checks | Production build passes. Existing lint debt remains: 15 errors and 6 warnings, unrelated to this pass. |
-| Mobile static checks | Typecheck, lint, Expo public config, and Android JS export passed before the current EAS preview build. Expo Doctor remains host/network-blocked rather than a project failure. |
+| Mobile static checks | Typecheck, lint, Expo public config, and Android JS export pass. Expo Doctor returned no usable host output in this environment, so it remains inconclusive rather than a project failure. |
 
 ## Deliberately deferred actions
 
