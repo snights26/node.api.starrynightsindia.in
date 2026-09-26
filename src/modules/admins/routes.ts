@@ -1,0 +1,24 @@
+import { randomUUID } from "node:crypto";
+import { Router } from "express";
+import bcrypt from "bcryptjs";
+import { z } from "zod";
+import { query, queryOne, transaction } from "../../db/pool.js";
+import { asyncRoute, badRequest, created, message, notFound, ok, validateBody } from "../../lib/api.js";
+import { authenticate, requireRole, type Role } from "../../lib/auth.js";
+import { isoDate } from "../../lib/values.js";
+
+export const adminsRouter = Router();
+const superAdmin = [authenticate, requireRole("SUPER_ADMIN")];
+const param = (value: string | string[] | undefined): string => Array.isArray(value) ? value[0] ?? "" : value ?? "";
+const createSchema=z.object({userId:z.string().trim().min(1).max(40),name:z.string().trim().min(1).max(120),email:z.string().trim().email().max(255),password:z.string().min(8).max(120),role:z.enum(["ADMIN","SUPER_ADMIN"])});
+const roleSchema=z.object({role:z.enum(["ADMIN","SUPER_ADMIN"])});
+const passwordSchema=z.object({password:z.string().min(8).max(120)});
+type Admin={id:string;user_id:string;name:string;email:string;role:Role;enabled:boolean;created_at:Date|string;updated_at:Date|string;deleted:boolean};
+const map=(item:Admin):Record<string,unknown>=>({id:item.id,userId:item.user_id,name:item.name,email:item.email,role:item.role,enabled:item.enabled,createdAt:isoDate(item.created_at),updatedAt:isoDate(item.updated_at)});
+const find=async(id:string):Promise<Admin>=>{const item=await queryOne<Admin>("SELECT id,user_id,name,email,role,enabled,created_at,updated_at,deleted FROM app_users WHERE id=$1 AND deleted=FALSE AND role IN ('ADMIN','SUPER_ADMIN')",[id]);if(!item)throw notFound("Administrator account not found");return item;};
+const activeSuperAdmins=async():Promise<number>=>Number((await queryOne<{count:string}>("SELECT COUNT(*)::text AS count FROM app_users WHERE role='SUPER_ADMIN' AND deleted=FALSE AND enabled=TRUE"))?.count??0);
+adminsRouter.get("/admin-accounts",...superAdmin,asyncRoute(async(_request,response)=>response.json(ok((await query<Admin>("SELECT id,user_id,name,email,role,enabled,created_at,updated_at,deleted FROM app_users WHERE deleted=FALSE AND role IN ('ADMIN','SUPER_ADMIN') ORDER BY created_at DESC")).map(map)))));
+adminsRouter.post("/admin-accounts",...superAdmin,validateBody(createSchema),asyncRoute(async(request,response)=>{const body=request.body as z.infer<typeof createSchema>;const duplicate=await queryOne<{id:string}>("SELECT id FROM app_users WHERE user_id ILIKE $1 OR email ILIKE $2",[body.userId,body.email]);if(duplicate)throw badRequest("An account with this user ID or email already exists");const id=randomUUID();await queryOne("INSERT INTO app_users (id,created_at,updated_at,deleted,user_id,name,email,password_hash,role,profile_completed,auth_provider,email_verified,enabled) VALUES ($1,NOW(),NOW(),FALSE,$2,$3,$4,$5,$6,TRUE,'LOCAL',TRUE,TRUE)",[id,body.userId,body.name,body.email,await bcrypt.hash(body.password,12),body.role]);response.status(201).json(created(map(await find(id))));}));
+adminsRouter.put("/admin-accounts/:id/role",...superAdmin,validateBody(roleSchema),asyncRoute(async(request,response)=>{const account=await find(param(request.params.id));const body=request.body as z.infer<typeof roleSchema>;if(account.id===request.auth!.id)throw badRequest("You cannot change your own administrator role");if(account.role==="SUPER_ADMIN"&&body.role!=="SUPER_ADMIN"&&await activeSuperAdmins()<=1)throw badRequest("At least one active Super Admin must remain");await transaction(async(client)=>{await client.query("UPDATE app_users SET role=$1,updated_at=NOW() WHERE id=$2",[body.role,account.id]);await client.query("DELETE FROM refresh_tokens WHERE user_id=$1",[account.id]);});response.json(ok(map(await find(account.id))));}));
+adminsRouter.put("/admin-accounts/:id/password",...superAdmin,validateBody(passwordSchema),asyncRoute(async(request,response)=>{const account=await find(param(request.params.id));const body=request.body as z.infer<typeof passwordSchema>;await transaction(async(client)=>{await client.query("UPDATE app_users SET password_hash=$1,updated_at=NOW() WHERE id=$2",[await bcrypt.hash(body.password,12),account.id]);await client.query("DELETE FROM refresh_tokens WHERE user_id=$1",[account.id]);});response.json(ok(map(await find(account.id))));}));
+adminsRouter.delete("/admin-accounts/:id",...superAdmin,asyncRoute(async(request,response)=>{const account=await find(param(request.params.id));if(account.id===request.auth!.id)throw badRequest("You cannot delete your own administrator account");if(account.role==="SUPER_ADMIN"&&await activeSuperAdmins()<=1)throw badRequest("At least one active Super Admin must remain");await transaction(async(client)=>{await client.query("UPDATE app_users SET enabled=FALSE,deleted=TRUE,updated_at=NOW() WHERE id=$1",[account.id]);await client.query("DELETE FROM refresh_tokens WHERE user_id=$1",[account.id]);});response.json(message("Administrator account disabled"));}));
