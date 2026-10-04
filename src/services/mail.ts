@@ -4,6 +4,8 @@ import { env } from "../config/env.js";
 type MailAccount = "system" | "payment" | "quotation";
 type SmtpSettings = typeof env.smtpPayment;
 const transporters: Partial<Record<MailAccount, Transporter>> = {};
+const verifiedTransporters = new Set<MailAccount>();
+type DeliveryResult = { delivered: boolean; message: string; suppressed?: boolean };
 const accountSettings = (account: MailAccount): SmtpSettings => account === "payment" ? env.smtpPayment : account === "quotation" ? env.smtpQuotation : env.smtp;
 const getTransporter = (account: MailAccount): Transporter | undefined => {
   const settings = accountSettings(account);
@@ -12,36 +14,70 @@ const getTransporter = (account: MailAccount): Transporter | undefined => {
   return transporters[account];
 };
 
-const layout = (title: string, content: string): string => `<!doctype html><html><body style="margin:0;background:#f4f6f8;font-family:Arial,sans-serif;color:#172033"><main style="max-width:640px;margin:24px auto;background:#fff;padding:32px;border-radius:10px"><h1 style="margin:0 0 20px;color:#12305b">Starry Nights</h1><h2>${title}</h2>${content}<p style="margin-top:28px;color:#64748b">Starry Nights Team</p></main></body></html>`;
-
-type MailAttachment = { filename: string; contentType: string } & ({ content: Buffer; href?: never } | { href: string; content?: never });
-
-export const sendEmail = async (options: { to: string; subject: string; html: string; attachments?: MailAttachment[] }, account: MailAccount = "system"): Promise<{ delivered: boolean; message: string }> => {
-  if (env.mail.deliveryMode === "disabled") return { delivered: false, message: "Email delivery is disabled for this runtime" };
-  if (env.mail.deliveryMode === "safe" && !env.mail.safeRecipients.includes(options.to)) {
-    return { delivered: false, message: "Email delivery is suppressed outside the staging allowlist" };
-  }
+const verifyTransporter = async (account: MailAccount): Promise<DeliveryResult> => {
   const client = getTransporter(account);
   if (!client) return { delivered: false, message: "Email is disabled or not configured" };
+  if (verifiedTransporters.has(account)) return { delivered: true, message: "Verified" };
   try {
-    await client.sendMail({ from: accountSettings(account).from, to: options.to, subject: options.subject, html: options.html, attachments: options.attachments });
-    return { delivered: true, message: "Delivered" };
+    await client.verify();
+    verifiedTransporters.add(account);
+    console.info("SMTP transporter verified", { account });
+    return { delivered: true, message: "Verified" };
   } catch {
+    console.warn("SMTP transporter verification failed", { account });
     return { delivered: false, message: "Email delivery failed" };
   }
 };
 
-export const sendContactEmails = async (contact: { name: string; email: string; phone: string; message: string }): Promise<void> => {
-  const destination = env.smtp.supportTo || env.smtp.to;
-  if (destination) await sendEmail({ to: destination, subject: `New Starry Nights enquiry from ${contact.name}`, html: layout("New contact submission", `<p><b>Name:</b> ${escape(contact.name)}</p><p><b>Email:</b> ${escape(contact.email)}</p><p><b>Phone:</b> ${escape(contact.phone)}</p><p>${escape(contact.message)}</p>`) });
-  if (contact.email) await sendEmail({ to: contact.email, subject: "We received your Starry Nights message", html: layout("Thank you for contacting us", `<p>Hi ${escape(contact.name)},</p><p>Our travel team has received your message and will be in touch shortly.</p>`) });
+const layout = (title: string, content: string): string => `<!doctype html><html><body style="margin:0;background:#f4f6f8;font-family:Arial,sans-serif;color:#172033"><main style="max-width:640px;margin:24px auto;background:#fff;padding:32px;border-radius:10px"><h1 style="margin:0 0 20px;color:#12305b">Starry Nights</h1><h2>${title}</h2>${content}<p style="margin-top:28px;color:#64748b">Starry Nights Team</p></main></body></html>`;
+
+type MailAttachment = { filename: string; contentType: string } & ({ content: Buffer; href?: never } | { href: string; content?: never });
+
+export const sendEmail = async (options: { to: string; subject: string; html: string; attachments?: MailAttachment[] }, account: MailAccount = "system"): Promise<DeliveryResult> => {
+  if (env.mail.deliveryMode === "disabled") return { delivered: false, message: "Email delivery is disabled for this runtime" };
+  if (env.mail.deliveryMode === "safe" && !env.mail.safeRecipients.includes(options.to)) {
+    console.info("SMTP delivery suppressed by staging allowlist", { account });
+    return { delivered: false, suppressed: true, message: "Email delivery is suppressed outside the staging allowlist" };
+  }
+  const verified = await verifyTransporter(account);
+  if (!verified.delivered) return verified;
+  const client = getTransporter(account);
+  if (!client) return { delivered: false, message: "Email is disabled or not configured" };
+  try {
+    await client.sendMail({ from: accountSettings(account).from, to: options.to, subject: options.subject, html: options.html, attachments: options.attachments });
+    console.info("SMTP delivery accepted", { account, stagingSafeMode: env.mail.deliveryMode === "safe" });
+    return { delivered: true, message: "Delivered" };
+  } catch {
+    console.warn("SMTP delivery failed", { account });
+    return { delivered: false, message: "Email delivery failed" };
+  }
 };
 
-export const sendEnquiryEmails = async (enquiry: { name: string; email?: string | null; phone: string; destination?: string | null; travelDates?: string | null; message?: string | null }): Promise<void> => {
+const shouldSendAcknowledgement = (email: string): boolean => env.mail.deliveryMode !== "safe" || env.mail.safeRecipients.includes(email);
+
+export const sendContactEmails = async (contact: { name: string; email: string; phone: string; message: string }): Promise<DeliveryResult> => {
+  const destination = env.smtp.supportTo || env.smtp.to;
+  if (!destination) return { delivered: false, message: "Contact email is not configured" };
+  const internal = await sendEmail({ to: destination, subject: `New Starry Nights enquiry from ${contact.name}`, html: layout("New contact submission", `<p><b>Name:</b> ${escape(contact.name)}</p><p><b>Email:</b> ${escape(contact.email)}</p><p><b>Phone:</b> ${escape(contact.phone)}</p><p>${escape(contact.message)}</p>`) });
+  if (!internal.delivered) return internal;
+  if (contact.email && shouldSendAcknowledgement(contact.email)) {
+    const acknowledgement = await sendEmail({ to: contact.email, subject: "We received your Starry Nights message", html: layout("Thank you for contacting us", `<p>Hi ${escape(contact.name)},</p><p>Our travel team has received your message and will be in touch shortly.</p>`) });
+    if (!acknowledgement.delivered) return acknowledgement;
+  }
+  return internal;
+};
+
+export const sendEnquiryEmails = async (enquiry: { name: string; email?: string | null; phone: string; destination?: string | null; travelDates?: string | null; message?: string | null }): Promise<DeliveryResult> => {
   const destination = env.smtp.supportTo || env.smtp.to;
   const details = `<p><b>Name:</b> ${escape(enquiry.name)}</p><p><b>Phone:</b> ${escape(enquiry.phone)}</p>${enquiry.email ? `<p><b>Email:</b> ${escape(enquiry.email)}</p>` : ""}${enquiry.destination ? `<p><b>Destination:</b> ${escape(enquiry.destination)}</p>` : ""}${enquiry.travelDates ? `<p><b>Travel dates:</b> ${escape(enquiry.travelDates)}</p>` : ""}${enquiry.message ? `<p>${escape(enquiry.message)}</p>` : ""}`;
-  if (destination) await sendEmail({ to: destination, subject: `New travel enquiry from ${enquiry.name}`, html: layout("New travel enquiry", details) });
-  if (enquiry.email) await sendEmail({ to: enquiry.email, subject: "We received your Starry Nights enquiry", html: layout("Thank you for your enquiry", `<p>Hi ${escape(enquiry.name)},</p><p>Our travel team has received your enquiry and will contact you shortly.</p>`) });
+  if (!destination) return { delivered: false, message: "Enquiry email is not configured" };
+  const internal = await sendEmail({ to: destination, subject: `New travel enquiry from ${enquiry.name}`, html: layout("New travel enquiry", details) });
+  if (!internal.delivered) return internal;
+  if (enquiry.email && shouldSendAcknowledgement(enquiry.email)) {
+    const acknowledgement = await sendEmail({ to: enquiry.email, subject: "We received your Starry Nights enquiry", html: layout("Thank you for your enquiry", `<p>Hi ${escape(enquiry.name)},</p><p>Our travel team has received your enquiry and will contact you shortly.</p>`) });
+    if (!acknowledgement.delivered) return acknowledgement;
+  }
+  return internal;
 };
 
 export const sendWelcomeEmail = async (user: { to?: string | null; name: string }): Promise<{ delivered: boolean; message: string }> => {
