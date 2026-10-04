@@ -15,6 +15,15 @@ export const contentRouter = Router();
 const superAdmin = [authenticate, requireRole("SUPER_ADMIN")];
 const adminRead = [authenticate, requireAnyRole("ADMIN", "SUPER_ADMIN")];
 const param = (value: string | string[] | undefined): string => Array.isArray(value) ? value[0] ?? "" : value ?? "";
+const featuredTypes = new Set(["package", "category", "top10"]);
+const featuredPlacements = new Set(["home", "trending", "both"]);
+const featuredPackageModes = new Map<string, Set<string>>([
+  ["package", new Set(["name", "subcategory"])],
+  ["top10", new Set(["name", "subcategory"])],
+  // `name` is a legacy-compatible category mode. It keeps the stored category
+  // selection intact while public expansion follows the historical child/direct rule.
+  ["category", new Set(["name", "children", "parent"])],
+]);
 const invalidateFeatured = async (): Promise<void> => {
   await invalidatePublicCache({ memoryGroups: ["featured"], tags: ["featured", "homepage", "packages", "categories"] });
 };
@@ -43,7 +52,7 @@ const parseItems = (value: unknown): Array<Record<string, unknown>> => {
 
 const featureRows = async (visibleOn?: string): Promise<FeaturedRow[]> => {
   const values: unknown[] = [];
-  const predicate = visibleOn ? "WHERE r.deleted = FALSE AND LOWER(r.visible_on) = LOWER($1)" : "WHERE r.deleted = FALSE";
+  const predicate = visibleOn ? "WHERE r.deleted = FALSE AND (LOWER(r.visible_on) = LOWER($1) OR LOWER(r.visible_on) = 'both')" : "WHERE r.deleted = FALSE";
   if (visibleOn) values.push(visibleOn);
   return query<FeaturedRow>(`SELECT r.*, COALESCE(json_agg(json_build_object('id', i.item_code, 'code', i.item_code, 'title', i.item_title, 'type', i.item_type, 'sequence', i.sequence) ORDER BY i.sequence) FILTER (WHERE i.id IS NOT NULL), '[]'::json) AS items
     FROM featured_rows r LEFT JOIN featured_row_items i ON i.row_id = r.id AND i.deleted = FALSE ${predicate} GROUP BY r.id ORDER BY r.sequence`, values);
@@ -141,11 +150,15 @@ const normalizeItems = async (rowType: string, packageMode: string, items: Array
 const writeRow = async (id: string, body: JsonObject, existing?: FeaturedRow): Promise<FeaturedRow> => {
   const rowId = firstString(body, "rowId", "id") || existing?.row_id || `ROW${Date.now()}`;
   const title = firstString(body, "title", "rowTitle") || existing?.title || rowId;
-  const type = firstString(body, "type", "rowType") || existing?.type || "package";
-  const visibleOn = firstString(body, "visibleOn") || existing?.visible_on || "home";
-  const packageMode = firstString(body, "packageMode") || existing?.package_mode || "name";
-  const operator = firstString(body, "categoryMatchOperator").toUpperCase() === "AND" ? "AND" : existing?.category_match_operator ?? "OR";
+  const type = (firstString(body, "type", "rowType") || existing?.type || "package").toLowerCase();
+  const visibleOn = (firstString(body, "visibleOn") || existing?.visible_on || "home").toLowerCase();
+  const packageMode = (firstString(body, "packageMode") || existing?.package_mode || "name").toLowerCase();
+  if (!featuredTypes.has(type)) throw badRequest("Featured row type must be package, category, or top10");
+  if (!featuredPlacements.has(visibleOn)) throw badRequest("Featured row placement must be home, trending, or both");
+  if (!featuredPackageModes.get(type)?.has(packageMode)) throw badRequest(`Package mode ${packageMode} is not valid for ${type} rows`);
+  const operator = (type === "package" || type === "top10") && packageMode === "subcategory" && firstString(body, "categoryMatchOperator").toUpperCase() === "AND" ? "AND" : "OR";
   const sequence = integerValue(body.sequence) ?? existing?.sequence ?? 1;
+  if (sequence < 1) throw badRequest("Featured row sequence must be at least 1");
   const items = await normalizeItems(type, packageMode, objectList(body.items));
   await transaction(async (client) => {
     if (existing) await client.query("UPDATE featured_rows SET row_id=$1,title=$2,type=$3,visible_on=$4,package_mode=$5,category_match_operator=$6,sequence=$7,updated_at=NOW() WHERE id=$8", [rowId, title, type, visibleOn, packageMode, operator, sequence, id]);
