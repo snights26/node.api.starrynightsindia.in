@@ -107,7 +107,7 @@ const likedPackages = async (userId: string): Promise<Record<string, unknown>[]>
 usersRouter.put("/users/me/complete-profile", authenticate, validateBody(userBody), asyncRoute(async (request, response) => {
   const user = await currentUser(request.auth!.id);
   const updated = await updateUser(user, request.body as JsonObject, true);
-  if (!user.profile_completed && updated.profile_completed) await sendProfileCompletedEmail({ to: updated.email, name: updated.name });
+  if (!user.profile_completed && updated.profile_completed) await sendProfileCompletedEmail({ to: updated.email, name: updated.name, contact: updated.contact, city: updated.city, state: updated.state, country: updated.country });
   response.json(ok(mapUser(updated)));
 }));
 
