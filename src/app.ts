@@ -34,7 +34,10 @@ export const app = express();
 
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
-app.use(pinoHttp({ redact: ["req.headers.authorization", "req.body.password", "req.body.idToken", "req.body.refreshToken"] }));
+// Platform request headers can include short-lived authorization material.
+// The API does not need them in application logs, so redact the complete
+// header object rather than trying to maintain a fragile allow/deny list.
+app.use(pinoHttp({ redact: ["req.headers", "req.body.password", "req.body.idToken", "req.body.refreshToken"] }));
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use("/api", noStoreByDefault);
 app.use(cors({
