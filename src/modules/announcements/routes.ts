@@ -36,7 +36,19 @@ let schemaPromise: Promise<void> | undefined;
  * request-time schema mutation against a live database.
  */
 const ensureAnnouncementSchema = async (): Promise<void> => {
-  if (env.deploymentEnvironment === "production") throw new Error("App announcements require an explicit production migration");
+  if (env.deploymentEnvironment === "production") {
+    try {
+      // Production schema changes are applied out of band. Keep this path
+      // read-only so an API request can never mutate a live database.
+      await query("SELECT 1 FROM app_announcements LIMIT 1");
+      return;
+    } catch (error) {
+      if ((error as { code?: string }).code === "42P01") {
+        throw new Error("App announcements production migration is required");
+      }
+      throw error;
+    }
+  }
   if (schemaPromise) return schemaPromise;
   schemaPromise = (async () => {
     await query(`CREATE TABLE IF NOT EXISTS app_announcements (
