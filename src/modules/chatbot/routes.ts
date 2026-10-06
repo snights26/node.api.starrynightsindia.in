@@ -5,25 +5,118 @@ import { query, queryOne } from "../../db/pool.js";
 import { asyncRoute, ok, validateBody } from "../../lib/api.js";
 import { requireAnyRole, authenticate } from "../../lib/auth.js";
 import { mapPackageSummary } from "../catalog/mapper.js";
-import { listPackages } from "../catalog/repository.js";
+import { listCategories, listPackages } from "../catalog/repository.js";
+import { resolveLocation } from "./location-resolver.js";
 
 export const chatbotRouter = Router();
 const admin = [authenticate, requireAnyRole("ADMIN", "SUPER_ADMIN")];
 const input = z.object({ message: z.string().trim().min(1).max(1000), sessionId: z.string().trim().max(80).optional(), context: z.record(z.string(), z.unknown()).optional() });
-const normalize=(value:string):string=>value.toLowerCase().replace(/[^a-z0-9\s-]/g," ").replace(/\s+/g," ").trim();
-const tokens=(value:string):string[]=>[...new Set(normalize(value).split(" ").filter(token=>token.length>1&&!new Set(["show","give","tell","need","want","please","package","packages","tour","tours","trip","trips","travel","available","details","about","with","from","near","best","more","some"]).has(token)))];
-const classify=(message:string):string=>{const text=normalize(message);if(/\b(hi|hello|hey|namaste)\b/.test(text))return"GREETING";if(/\b(price|cost|budget|fare)\b/.test(text))return"PRICING";if(/\b(book|booking|reserve)\b/.test(text))return"BOOKING";if(/\b(cancel|refund|policy|terms)\b/.test(text))return"POLICY";return"PACKAGE_INQUIRY";};
-const quickReplies=(intent:string,hasPackages:boolean):string[]=>hasPackages?["View package details","Show more packages","Contact support"]:intent==="GREETING"?["Show Goa packages","Manali packages","Singapore packages"]:intent==="POLICY"?["Cancellation policy","Refund policy","Booking terms"]:["Goa packages","Manali packages","Contact support"];
+const ignoredTokens = new Set(["show", "give", "tell", "need", "want", "please", "package", "packages", "tour", "tours", "trip", "trips", "travel", "available", "details", "about", "with", "from", "near", "best", "more", "some"]);
+const normalize = (value: string): string => value.toLowerCase().replace(/[^a-z0-9\s-]/g, " ").replace(/\s+/g, " ").trim();
+const tokens = (value: string): string[] => [...new Set(normalize(value).split(" ").filter((token) => token.length > 1 && !ignoredTokens.has(token)))];
+const classify = (message: string): string => {
+  const text = normalize(message);
+  if (/\b(hi|hello|hey|namaste)\b/.test(text)) return "GREETING";
+  if (/\b(price|cost|budget|fare)\b/.test(text)) return "PRICING";
+  if (/\b(book|booking|reserve)\b/.test(text)) return "BOOKING";
+  if (/\b(cancel|refund|policy|terms)\b/.test(text)) return "POLICY";
+  return "PACKAGE_INQUIRY";
+};
+const quickReplies = (intent: string, hasPackages: boolean): string[] => hasPackages
+  ? ["View package details", "Show more packages", "Contact support"]
+  : intent === "GREETING"
+    ? ["Show Goa packages", "Manali packages", "Singapore packages"]
+    : intent === "POLICY"
+      ? ["Cancellation policy", "Refund policy", "Booking terms"]
+      : ["Goa packages", "Manali packages", "Contact support"];
 
-chatbotRouter.post("/chatbot/query",validateBody(input),asyncRoute(async(request,response)=>{const started=Date.now();const body=request.body as z.infer<typeof input>;const sessionId=body.sessionId||`CHAT-${randomUUID().slice(0,12)}`;const message=body.message;const messageTokens=tokens(message);const intent=classify(message);let source="FALLBACK";let answer="I could not find an exact package for that query. You can ask about a destination, duration, budget, or travel style, and I will help you discover options.";let packages:Record<string,unknown>[]=[];let confidence=0.35;let escalation=false;
-  const keywordRows=await query<{keyword_id:string;keywords:string|null;response:string|null;type:string|null}>("SELECT keyword_id,keywords,response,type FROM keywords WHERE deleted=FALSE AND response IS NOT NULL ORDER BY type");
-  let best:{score:number;response:string;id:string}|undefined;for(const row of keywordRows){let score=0;const haystack=normalize(`${row.type??""} ${row.keywords??""} ${row.response??""}`);for(const token of messageTokens)if(haystack.includes(token))score+=2;for(const phrase of (row.keywords??"").split(",").map(normalize).filter(Boolean))if(normalize(message).includes(phrase))score+=4;if(score>=2&&(!best||score>best.score))best={score,response:row.response??"",id:row.keyword_id};}
-  if(intent==="GREETING"){source="TEMPLATE";answer="Hello. Tell me the destination, travel style, or budget you have in mind and I will show relevant options.";confidence=0.95;}
-  else if(best){source="FAQ_KB";answer=best.response;confidence=Math.min(0.95,0.55+best.score*0.05);}
-  else if(messageTokens.length){const summaries=(await listPackages()).map(mapPackageSummary);const ranked=summaries.map(pkg=>{const haystack=normalize(`${pkg.packageCode} ${pkg.name} ${pkg.title} ${pkg.avgCost} ${pkg.pickup} ${(pkg.categoryCodes as string[]).join(" ")}`);return{pkg,score:messageTokens.reduce((score,token)=>score+(haystack.includes(token)?1:0),0)}}).filter(item=>item.score>0).sort((a,b)=>b.score-a.score).slice(0,10);if(ranked.length){packages=ranked.map(item=>item.pkg);source="PACKAGE_DATABASE";confidence=0.78;answer=ranked.length===1?`I found one package related to your query: ${ranked[0].pkg.name}.`:`I found ${ranked.length} packages related to your query: ${ranked.slice(0,3).map(item=>item.pkg.name).join(", ")}.`;}}
-  if(source==="FALLBACK"){escalation=true;await queryOne("INSERT INTO unanswered_questions (id,created_at,updated_at,deleted,question_id,question,response) VALUES ($1,NOW(),NOW(),FALSE,$2,$3,NULL)",[randomUUID(),`Q${Date.now()}`,message.slice(0,1000)]);}
-  await queryOne("INSERT INTO chatbot_interactions (id,created_at,updated_at,deleted,session_id,query_text,intent,confidence,source,matched_key,response_time_ms,escalation_required) VALUES ($1,NOW(),NOW(),FALSE,$2,$3,$4,$5,$6,'',$7,$8)",[randomUUID(),sessionId,message.slice(0,500),intent,confidence,source,Date.now()-started,escalation]);
-  response.json(ok({sessionId,intent,confidence:Math.round(confidence*100)/100,source,answer,packages,quickReplies:quickReplies(intent,packages.length>0),escalationRequired:escalation,context:body.context??{}}));
+chatbotRouter.post("/chatbot/query", validateBody(input), asyncRoute(async (request, response) => {
+  const started = Date.now();
+  const body = request.body as z.infer<typeof input>;
+  const sessionId = body.sessionId || `CHAT-${randomUUID().slice(0, 12)}`;
+  const message = body.message;
+  const messageTokens = tokens(message);
+  const intent = classify(message);
+  let source = "FALLBACK";
+  let matchedKey = "";
+  let answer = "I could not find an exact package for that query. You can ask about a destination, duration, budget, or travel style, and I will help you discover options.";
+  let packages: Record<string, unknown>[] = [];
+  let confidence = 0.35;
+  let escalation = false;
+
+  const keywordRows = await query<{ keyword_id: string; keywords: string | null; response: string | null; type: string | null }>("SELECT keyword_id,keywords,response,type FROM keywords WHERE deleted=FALSE AND response IS NOT NULL ORDER BY type");
+  let best: { score: number; response: string; id: string } | undefined;
+  for (const row of keywordRows) {
+    let score = 0;
+    const haystack = normalize(`${row.type ?? ""} ${row.keywords ?? ""} ${row.response ?? ""}`);
+    for (const token of messageTokens) if (haystack.includes(token)) score += 2;
+    for (const phrase of (row.keywords ?? "").split(",").map(normalize).filter(Boolean)) if (normalize(message).includes(phrase)) score += 4;
+    if (score >= 2 && (!best || score > best.score)) best = { score, response: row.response ?? "", id: row.keyword_id };
+  }
+
+  const location = intent === "GREETING" ? undefined : resolveLocation(message, await listCategories());
+  if (intent === "GREETING") {
+    source = "TEMPLATE";
+    answer = "Hello. Tell me the destination, travel style, or budget you have in mind and I will show relevant options.";
+    confidence = 0.95;
+  } else if (location?.kind === "ambiguous") {
+    source = "LOCATION_TAXONOMY";
+    answer = `I found more than one travel location matching your request: ${location.candidates.map((candidate) => candidate.name).join(", ")}. Please tell me which one you mean.`;
+    confidence = 0.72;
+  } else if (location?.kind === "resolved") {
+    const locationPackages = await listPackages({ category: location.category.code });
+    packages = locationPackages.map(mapPackageSummary);
+    source = "LOCATION_TAXONOMY";
+    matchedKey = location.category.code;
+    confidence = locationPackages.length ? 0.9 : 0.84;
+    if (locationPackages.length) {
+      answer = locationPackages.length === 1
+        ? `I found one active package for ${location.category.name}: ${locationPackages[0].hero_title}.`
+        : `I found ${locationPackages.length} active packages for ${location.category.name}.`;
+    } else {
+      const related = location.descendants.length ? ` Related destinations include ${location.descendants.join(", ")}.` : "";
+      answer = `${location.category.name} is a recognised travel location, but no active packages are currently available.${related}`;
+    }
+  } else if (best) {
+    source = "FAQ_KB";
+    matchedKey = best.id;
+    answer = best.response;
+    confidence = Math.min(0.95, 0.55 + best.score * 0.05);
+  } else if (messageTokens.length) {
+    const summaries = (await listPackages()).map(mapPackageSummary);
+    const ranked = summaries
+      .map((pkg) => {
+        const haystack = normalize(`${pkg.packageCode} ${pkg.name} ${pkg.title} ${pkg.avgCost} ${pkg.pickup} ${(pkg.categoryCodes as string[]).join(" ")}`);
+        return { pkg, score: messageTokens.reduce((score, token) => score + (haystack.includes(token) ? 1 : 0), 0) };
+      })
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10);
+    if (ranked.length) {
+      packages = ranked.map((item) => item.pkg);
+      source = "PACKAGE_DATABASE";
+      confidence = 0.78;
+      answer = ranked.length === 1
+        ? `I found one package related to your query: ${ranked[0].pkg.name}.`
+        : `I found ${ranked.length} packages related to your query: ${ranked.slice(0, 3).map((item) => item.pkg.name).join(", ")}.`;
+    }
+  }
+
+  if (source === "FALLBACK") {
+    escalation = true;
+    await queryOne("INSERT INTO unanswered_questions (id,created_at,updated_at,deleted,question_id,question,response) VALUES ($1,NOW(),NOW(),FALSE,$2,$3,NULL)", [randomUUID(), `Q${Date.now()}`, message.slice(0, 1000)]);
+  }
+  await queryOne("INSERT INTO chatbot_interactions (id,created_at,updated_at,deleted,session_id,query_text,intent,confidence,source,matched_key,response_time_ms,escalation_required) VALUES ($1,NOW(),NOW(),FALSE,$2,$3,$4,$5,$6,$7,$8,$9)", [randomUUID(), sessionId, message.slice(0, 500), intent, confidence, source, matchedKey, Date.now() - started, escalation]);
+  response.json(ok({ sessionId, intent, confidence: Math.round(confidence * 100) / 100, source, answer, packages, quickReplies: quickReplies(intent, packages.length > 0), escalationRequired: escalation, context: body.context ?? {} }));
 }));
 
-chatbotRouter.get("/chatbot/analytics",...admin,asyncRoute(async(_request,response)=>{const [summary,intents,questions]=await Promise.all([queryOne<{total:string;escalations:string}>("SELECT COUNT(*)::text AS total,COUNT(*) FILTER (WHERE escalation_required=TRUE)::text AS escalations FROM chatbot_interactions WHERE deleted=FALSE"),query<{intent:string|null;count:string}>("SELECT intent,COUNT(*)::text AS count FROM chatbot_interactions WHERE deleted=FALSE GROUP BY intent ORDER BY COUNT(*) DESC"),query<{question:string;count:string}>("SELECT query_text AS question,COUNT(*)::text AS count FROM chatbot_interactions WHERE deleted=FALSE GROUP BY query_text ORDER BY COUNT(*) DESC LIMIT 10")]);const total=Number(summary?.total??0);const escalations=Number(summary?.escalations??0);response.json(ok({totalQueries:total,escalationCount:escalations,escalationRate:total?escalations/total:0,intentBreakdown:intents.map(item=>({intent:item.intent??"UNKNOWN",count:Number(item.count)})),topQuestions:questions.map(item=>({question:item.question,count:Number(item.count)}))}));}));
+chatbotRouter.get("/chatbot/analytics", ...admin, asyncRoute(async (_request, response) => {
+  const [summary, intents, questions] = await Promise.all([
+    queryOne<{ total: string; escalations: string }>("SELECT COUNT(*)::text AS total,COUNT(*) FILTER (WHERE escalation_required=TRUE)::text AS escalations FROM chatbot_interactions WHERE deleted=FALSE"),
+    query<{ intent: string | null; count: string }>("SELECT intent,COUNT(*)::text AS count FROM chatbot_interactions WHERE deleted=FALSE GROUP BY intent ORDER BY COUNT(*) DESC"),
+    query<{ question: string; count: string }>("SELECT query_text AS question,COUNT(*)::text AS count FROM chatbot_interactions WHERE deleted=FALSE GROUP BY query_text ORDER BY COUNT(*) DESC LIMIT 10"),
+  ]);
+  const total = Number(summary?.total ?? 0);
+  const escalations = Number(summary?.escalations ?? 0);
+  response.json(ok({ totalQueries: total, escalationCount: escalations, escalationRate: total ? escalations / total : 0, intentBreakdown: intents.map((item) => ({ intent: item.intent ?? "UNKNOWN", count: Number(item.count) })), topQuestions: questions.map((item) => ({ question: item.question, count: Number(item.count) })) }));
+}));
