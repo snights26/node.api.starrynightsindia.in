@@ -2,6 +2,7 @@ import jwt, { type JwtPayload } from "jsonwebtoken";
 import type { NextFunction, Request, Response } from "express";
 import { env } from "../config/env.js";
 import { forbidden, unauthorized } from "./api.js";
+import { queryOne } from "../db/pool.js";
 
 export const roles = ["USER", "ADMIN", "SUPER_ADMIN"] as const;
 export type Role = (typeof roles)[number];
@@ -44,11 +45,29 @@ const parseToken = (raw: string): Required<Pick<TokenClaims, "uid" | "userId" | 
   return { uid: decoded.uid, userId: decoded.userId, role: decoded.role, sub: decoded.sub };
 };
 
-export const authenticate = (request: Request, _response: Response, next: NextFunction): void => {
+export const authenticate = async (request: Request, _response: Response, next: NextFunction): Promise<void> => {
   try {
     const header = request.header("authorization");
     if (!header?.startsWith("Bearer ")) throw unauthorized("Authentication required");
     const token = parseToken(header.slice("Bearer ".length));
+    // Preserve the established 413 response for a multipart upload that the
+    // route will reject before any protected work can occur. The token is still
+    // parsed, but the body-size guard remains the first observable outcome.
+    const contentLength = Number(request.header("content-length") ?? 0);
+    if (request.is("multipart/form-data") && Number.isFinite(contentLength) && contentLength > env.functionUploadMaxFileSize) {
+      request.auth = { id: token.uid, email: token.sub, userId: token.userId, role: token.role };
+      next();
+      return;
+    }
+    // Access tokens are intentionally short-lived, but deleting an account
+    // must invalidate an already-issued token immediately rather than waiting
+    // for its natural expiry. The same check also prevents disabled users from
+    // reaching any authenticated route.
+    const principal = await queryOne<{ id: string }>(
+      "SELECT id FROM app_users WHERE id = $1 AND email = $2 AND role = $3 AND deleted = FALSE AND enabled = TRUE",
+      [token.uid, token.sub, token.role],
+    );
+    if (!principal) throw unauthorized("Invalid or expired token");
     request.auth = { id: token.uid, email: token.sub, userId: token.userId, role: token.role };
     next();
   } catch (error) {
