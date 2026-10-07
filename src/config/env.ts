@@ -19,7 +19,7 @@ const smtpAccount = (prefix: string) => ({
   starttls: asBoolean(process.env[`${prefix}_STARTTLS`], true),
 });
 
-const origins = (process.env.CORS_ALLOWED_ORIGINS ?? "http://localhost:5173,http://localhost:5174")
+const configuredOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? "http://localhost:5173,http://localhost:5174")
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
@@ -30,6 +30,15 @@ const googleAllowedClientIds = parseGoogleAllowedClientIds(process.env.GOOGLE_AL
 
 const deploymentEnvironment = (process.env.DEPLOYMENT_ENVIRONMENT ?? "local").trim().toLowerCase();
 const databaseEnvironment = process.env.DATABASE_ENVIRONMENT?.trim().toLowerCase() || undefined;
+// Keep any temporary Vercel rollback aliases configured through the environment,
+// while making every final production browser origin explicit. This prevents a
+// fresh production deployment from silently omitting the www hostname.
+const origins = [...new Set([
+  ...configuredOrigins,
+  ...(deploymentEnvironment === "production"
+    ? ["https://starrynightsindia.in", "https://www.starrynightsindia.in", "https://admin.starrynightsindia.in"]
+    : []),
+])];
 const storageNamespace = process.env.STORAGE_NAMESPACE?.trim().replace(/^\/+|\/+$/g, "") || deploymentEnvironment;
 // Vercel Blob uses an OIDC token supplied to Functions at runtime. Store IDs
 // are intentionally separate from the automatic token, so a staging Function
