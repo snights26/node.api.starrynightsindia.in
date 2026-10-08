@@ -99,7 +99,10 @@ const activeRelease = async (): Promise<AppRelease | undefined> => queryOne<AppR
 appReleasesRouter.get("/app-releases/android/current", asyncRoute(async (_request, response) => {
   await requireReleaseSchema();
   const release = await activeRelease();
-  if (!release) throw notFound("No active Android release is currently available");
+  if (!release) {
+    response.json(ok(null, "No active Android release is currently available"));
+    return;
+  }
   response.json(ok(mapPublicRelease(release)));
 }));
 
