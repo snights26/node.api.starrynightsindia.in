@@ -27,6 +27,7 @@ import { usersRouter } from "./modules/users/routes.js";
 import { accountRouter } from "./modules/account/routes.js";
 import { storageRouter } from "./modules/storage/routes.js";
 import { legacyUploadRouter } from "./modules/storage/legacy-routes.js";
+import { appReleasesRouter } from "./modules/app-releases/routes.js";
 
 const helmet = helmetModule.default;
 
@@ -73,6 +74,7 @@ app.use("/api", mediaRouter);
 app.use("/api", supportRouter);
 app.use("/api", usersRouter);
 app.use("/api", accountRouter);
+app.use("/api", appReleasesRouter);
 app.use("/api/swagger-ui.html", swaggerUi.serve, swaggerUi.setup(openapi, { explorer: true }));
 app.use("/api/swagger", swaggerUi.serve, swaggerUi.setup(openapi, { explorer: true }));
 app.use("/api", notFoundHandler);

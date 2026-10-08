@@ -98,6 +98,10 @@ export const env = {
     mode: (process.env.RAZORPAY_MODE?.trim().toLowerCase() || "disabled") as "disabled" | "test" | "live",
   },
   uploadMaxFileSize: asInteger(process.env.UPLOAD_MAX_FILE_SIZE_BYTES, 25 * 1024 * 1024),
+  // Android release binaries bypass the Function body entirely through a
+  // Cloudinary-signed browser upload. This separate ceiling prevents the
+  // normal image/document upload limit from accidentally restricting APKs.
+  androidReleaseMaxFileSize: asInteger(process.env.ANDROID_RELEASE_MAX_FILE_SIZE_BYTES, 500 * 1024 * 1024),
   // A Function receives legacy multipart requests only below Vercel's 4.5 MB
   // body ceiling. Product limits remain higher through direct Blob uploads.
   functionUploadMaxFileSize: Math.min(asInteger(process.env.FUNCTION_UPLOAD_MAX_SIZE_BYTES, 4 * 1024 * 1024), 4 * 1024 * 1024),
