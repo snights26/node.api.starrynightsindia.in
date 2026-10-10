@@ -105,7 +105,7 @@ export const env = {
   // A Function receives legacy multipart requests only below Vercel's 4.5 MB
   // body ceiling. Product limits remain higher through direct Blob uploads.
   functionUploadMaxFileSize: Math.min(asInteger(process.env.FUNCTION_UPLOAD_MAX_SIZE_BYTES, 4 * 1024 * 1024), 4 * 1024 * 1024),
-  privateAttachmentMaxFileSize: asInteger(process.env.PRIVATE_ATTACHMENT_MAX_SIZE_BYTES, 10 * 1024 * 1024),
+  privateAttachmentMaxFileSize: asInteger(process.env.PRIVATE_ATTACHMENT_MAX_SIZE_BYTES, 20 * 1024 * 1024),
   storage: {
     // A configured store ID activates the Vercel OIDC path. A read/write token
     // remains a local-only fallback for the migration utility; it is never
