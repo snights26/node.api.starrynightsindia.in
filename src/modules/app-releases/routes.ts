@@ -7,7 +7,7 @@ import { authenticate, requireRole } from "../../lib/auth.js";
 import {
   createAndroidReleaseUploadAuthorization,
   deleteAndroidReleaseAsset,
-  inspectAndroidReleaseAsset,
+  finalizeAndroidReleaseAsset,
   isAndroidApkFileName,
 } from "../../services/storage.js";
 import { assertGreaterVersionCode, publishAfterUpload, type ReleaseCleanupTarget } from "./workflow.js";
@@ -72,7 +72,7 @@ const mapPublicRelease = (release: AppRelease): Record<string, unknown> => {
 };
 
 const uploadAuthorizationSchema = z.object({
-  fileName: z.string().trim().min(5).max(255).refine(isAndroidApkFileName, "Only Android APK files are supported"),
+  fileName: z.string().trim().min(5).max(255).refine(isAndroidApkFileName, "Only APK files are supported"),
   contentType: z.string().trim().min(1).max(160),
   fileSize: z.number().int().positive(),
 }).strict();
@@ -81,9 +81,10 @@ const publishSchema = z.object({
   versionName: z.string().trim().min(1).max(80),
   versionCode: z.number().int().positive(),
   releaseNotes: z.string().trim().max(8_000).optional().nullable(),
-  fileName: z.string().trim().min(5).max(255).refine(isAndroidApkFileName, "Only Android APK files are supported"),
-  cloudinaryPublicId: z.string().trim().min(1).max(600),
-  sha256: z.string().trim().regex(/^[a-fA-F0-9]{64}$/, "SHA-256 must be a 64-character hexadecimal digest"),
+  fileName: z.string().trim().min(5).max(255).refine(isAndroidApkFileName, "Only APK files are supported"),
+  uploadIntent: z.string().trim().min(1).max(8_000),
+  uploadedUrl: z.string().trim().url().max(2048),
+  sha256: z.string().trim().regex(/^[a-fA-F0-9]{64}$/, "A valid SHA-256 hash is required"),
 }).strict();
 
 const idFromParams = (value: string | string[] | undefined): string => {
@@ -114,15 +115,15 @@ appReleasesRouter.get("/admin/app-releases/android", ...superAdmin, asyncRoute(a
 
 appReleasesRouter.post("/admin/app-releases/android/authorize-upload", ...superAdmin, validateBody(uploadAuthorizationSchema), asyncRoute(async (request, response) => {
   await requireReleaseSchema();
-  response.json(ok(createAndroidReleaseUploadAuthorization(request.body as z.infer<typeof uploadAuthorizationSchema>)));
+  response.json(ok(createAndroidReleaseUploadAuthorization({ ...(request.body as z.infer<typeof uploadAuthorizationSchema>), actorId: request.auth!.id })));
 }));
 
 appReleasesRouter.post("/admin/app-releases/android/publish", ...superAdmin, validateBody(publishSchema), asyncRoute(async (request, response) => {
   await requireReleaseSchema();
   const body = request.body as z.infer<typeof publishSchema>;
-  // Cloudinary is the source of truth for object existence, type, URL and size.
+  // Vercel Blob is verified for object existence, type, URL and size.
   // Do this before the transaction so a bad upload cannot change the active row.
-  const asset = await inspectAndroidReleaseAsset(body.cloudinaryPublicId);
+  const asset = await finalizeAndroidReleaseAsset(body.uploadIntent, body.uploadedUrl, request.auth!.id, body.fileName);
 
   const result = await publishAfterUpload({
     activate: async () => transaction(async (client) => {

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { v2 as cloudinary } from "cloudinary";
 import { env } from "../config/env.js";
+import { isManagedPublicBlobUrl, storageService } from "./blob-storage.js";
 import { AppError, badRequest } from "../lib/api.js";
 
 let configured = false;
@@ -41,65 +42,71 @@ export const createAndroidReleaseUploadAuthorization = (input: {
   fileName: string;
   contentType: string;
   fileSize: number;
-}): { uploadUrl: string; formFields: Record<string, string>; publicId: string } => {
+  actorId: string;
+}) => {
   if (!isAndroidApkFileName(input.fileName)) throw badRequest("Only Android APK files are supported");
   if (!androidReleaseTypes.has(input.contentType)) throw badRequest("The APK content type is not supported");
   if (!Number.isSafeInteger(input.fileSize) || input.fileSize <= 0 || input.fileSize > env.androidReleaseMaxFileSize) {
     throw badRequest("The APK is empty or exceeds the release upload limit");
   }
-  configure();
-  const timestamp = Math.floor(Date.now() / 1000);
-  const folder = androidReleaseFolder();
-  const publicId = `android-${randomUUID()}`;
-  const signature = cloudinary.utils.api_sign_request({ folder, public_id: publicId, timestamp }, env.cloudinary.apiSecret!);
+
+  return storageService.createUploadAuthorization({
+    purpose: "android-release",
+    access: "public",
+    actorId: input.actorId,
+    filename: input.fileName,
+    contentType: input.contentType,
+    size: input.fileSize,
+    allowedContentTypes: [...androidReleaseTypes],
+    maximumSizeInBytes: env.androidReleaseMaxFileSize,
+  });
+};
+
+export const finalizeAndroidReleaseAsset = async (
+  intent: string,
+  uploadedUrl: string,
+  actorId: string,
+  fileName: string,
+): Promise<AndroidReleaseAsset> => {
+  if (!isAndroidApkFileName(fileName)) throw badRequest("Only Android APK files are supported");
+
+  const asset = await storageService.finalizeUpload(intent, uploadedUrl, actorId, "android-release");
+
+  if (
+    !isManagedPublicBlobUrl(asset.url) ||
+    !androidReleaseTypes.has(asset.contentType) ||
+    !asset.pathname.toLowerCase().endsWith(".apk") ||
+    !Number.isSafeInteger(asset.size) ||
+    asset.size <= 0 ||
+    asset.size > env.androidReleaseMaxFileSize
+  ) {
+    throw badRequest("The uploaded file is not a valid Android APK release asset");
+  }
+
   return {
-    uploadUrl: `https://api.cloudinary.com/v1_1/${env.cloudinary.cloudName}/raw/upload`,
-    formFields: {
-      api_key: env.cloudinary.apiKey!,
-      timestamp: String(timestamp),
-      folder,
-      public_id: publicId,
-      signature,
-    },
-    publicId: `${folder}/${publicId}`,
+    publicId: `blob-public://${asset.url}`,
+    url: asset.url,
+    fileSize: asset.size,
   };
 };
 
-/** Inspect the newly uploaded raw asset before its URL can become public. */
-export const inspectAndroidReleaseAsset = async (publicId: string): Promise<AndroidReleaseAsset> => {
-  configure();
-  const expectedFolder = androidReleaseFolder();
-  if (!publicId.startsWith(`${expectedFolder}/`)) throw badRequest("The uploaded APK is outside the release storage folder");
-  try {
-    const asset = await cloudinary.api.resource(publicId, { resource_type: "raw" }) as {
-      public_id?: string;
-      secure_url?: string;
-      bytes?: number;
-      format?: string;
-      resource_type?: string;
-    };
-    const fileSize = asset.bytes;
-    if (asset.public_id !== publicId || asset.resource_type !== "raw" || asset.format?.toLowerCase() !== "apk" ||
-      !asset.secure_url?.startsWith("https://") || typeof fileSize !== "number" || !Number.isSafeInteger(fileSize) || fileSize <= 0 || fileSize > env.androidReleaseMaxFileSize) {
-      throw badRequest("The uploaded file is not a valid Android APK release asset");
-    }
-    return { publicId: asset.public_id, url: asset.secure_url, fileSize };
-  } catch (error) {
-    if (error instanceof AppError) throw error;
-    throw new AppError(400, "The uploaded APK could not be verified");
-  }
-};
-
-/** A missing previous asset is already successfully cleaned up. */
+/** Delete new Blob assets and retain cleanup support for legacy Cloudinary releases. */
 export const deleteAndroidReleaseAsset = async (publicId: string | null | undefined): Promise<void> => {
   if (!publicId) return;
+
+  if (publicId.startsWith("blob-public://")) {
+    const url = publicId.slice("blob-public://".length);
+    if (!isManagedPublicBlobUrl(url)) throw new AppError(400, "Invalid Android release storage reference");
+    await storageService.deleteObject(url, "public");
+    return;
+  }
+
   configure();
   const expectedFolder = androidReleaseFolder();
   if (!publicId.startsWith(`${expectedFolder}/`)) throw new AppError(400, "Invalid Android release storage reference");
   const result = await cloudinary.uploader.destroy(publicId, { resource_type: "raw", invalidate: true });
   if (result.result !== "ok" && result.result !== "not found") throw new AppError(503, "Android release storage cleanup is unavailable");
 };
-
 export const uploadFile = async (file: Express.Multer.File, folder: string, imageOnly = false): Promise<{ url: string; publicId: string }> => {
   if (!file.buffer.length || file.size > env.uploadMaxFileSize) throw badRequest("The upload is empty or exceeds the size limit");
   configure();

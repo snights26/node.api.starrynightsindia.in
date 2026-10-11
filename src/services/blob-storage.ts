@@ -17,7 +17,7 @@ export const VERCEL_FUNCTION_BINARY_LIMIT = 4 * 1024 * 1024;
 export const PRIVATE_STORAGE_REFERENCE_PREFIX = "blob-private://";
 
 export type StorageAccess = "private" | "public";
-export type StoragePurpose = "travel-photo" | "career-resume" | "quotation" | "notification-document" | "public-media";
+export type StoragePurpose = "travel-photo" | "career-resume" | "quotation" | "notification-document" | "public-media" | "android-release";
 type BlobCommandOptions = { token?: string; storeId?: string };
 
 export type StorageObject = {
@@ -356,6 +356,7 @@ export class StorageService {
     if (input.purpose === "career-resume") return `${root}/career-resumes/${randomUUID()}${fileExtension}`;
     if (input.purpose === "quotation") return `${root}/quotations/${input.actorId ?? "admin"}/${randomUUID()}.pdf`;
     if (input.purpose === "notification-document") return `${root}/notifications/${input.actorId ?? "admin"}/${randomUUID()}.pdf`;
+    if (input.purpose === "android-release") return `${root}/android-releases/${randomUUID()}-${safeFilename(input.filename)}`;
     return `${root}/media/${randomUUID()}-${safeFilename(input.filename)}`;
   }
 
