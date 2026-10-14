@@ -106,10 +106,24 @@ export const isManagedPublicBlobUrl = (value: string | null | undefined): value 
   if (typeof value !== "string") return false;
   try {
     const url = new URL(value);
-    return url.protocol === "https:" && url.hostname.endsWith(".blob.vercel-storage.com");
+    // A private Blob URL is still a Vercel Blob URL, but it cannot be used as
+    // the direct URL returned by the public Android-release endpoint.
+    return url.protocol === "https:" && url.hostname.endsWith(".public.blob.vercel-storage.com");
   } catch {
     return false;
   }
+};
+
+/**
+ * Keep the canonical public Blob URL in persistent metadata, but make links
+ * returned to a browser explicit downloads. The query parameter is part of
+ * Vercel Blob's public-download contract and does not alter the object.
+ */
+export const publicBlobDownloadUrl = (value: string): string => {
+  if (!isManagedPublicBlobUrl(value)) return value;
+  const url = new URL(value);
+  url.searchParams.set("download", "1");
+  return url.toString();
 };
 
 export const privatePathnameFromReference = (reference: string): string => {

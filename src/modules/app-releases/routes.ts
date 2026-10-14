@@ -4,12 +4,21 @@ import { z } from "zod";
 import { query, queryOne, transaction } from "../../db/pool.js";
 import { AppError, asyncRoute, badRequest, created, message, notFound, ok, validateBody } from "../../lib/api.js";
 import { authenticate, requireRole } from "../../lib/auth.js";
+import { publicBlobDownloadUrl } from "../../services/blob-storage.js";
 import {
   createAndroidReleaseUploadAuthorization,
   deleteAndroidReleaseAsset,
   finalizeAndroidReleaseAsset,
   isAndroidApkFileName,
 } from "../../services/storage.js";
+import {
+  APK_CONTENT_TYPE,
+  SN2_V5_SHA256,
+  SN2_V5_SIZE,
+  assertSn2V5MigrationSource,
+  copyVerifiedSn2V5ToPublicBlob,
+  preflightPublicAndroidBlobWrite,
+} from "./android-v5-public-migration.js";
 import { assertGreaterVersionCode, publishAfterUpload, type ReleaseCleanupTarget } from "./workflow.js";
 
 export const appReleasesRouter = Router();
@@ -68,7 +77,7 @@ const mapRelease = (release: AppRelease): Record<string, unknown> => ({
 
 const mapPublicRelease = (release: AppRelease): Record<string, unknown> => {
   const { cloudinaryPublicId: _cloudinaryPublicId, isActive: _isActive, ...publicRelease } = mapRelease(release);
-  return publicRelease;
+  return { ...publicRelease, downloadUrl: publicBlobDownloadUrl(release.file_url) };
 };
 
 const uploadAuthorizationSchema = z.object({
@@ -85,6 +94,10 @@ const publishSchema = z.object({
   uploadIntent: z.string().trim().min(1).max(8_000),
   uploadedUrl: z.string().trim().url().max(2048),
   sha256: z.string().trim().regex(/^[a-fA-F0-9]{64}$/, "A valid SHA-256 hash is required"),
+}).strict();
+
+const migrationConfirmationSchema = z.object({
+  confirmation: z.literal("MIGRATE_SN2_VERSION_CODE_5_TO_PUBLIC_BLOB"),
 }).strict();
 
 const idFromParams = (value: string | string[] | undefined): string => {
@@ -148,18 +161,48 @@ appReleasesRouter.post("/admin/app-releases/android/publish", ...superAdmin, val
       return { active, previous };
     }),
     discardNewAsset: () => deleteAndroidReleaseAsset(asset.publicId),
-    deleteOldAsset: (previous) => deleteAndroidReleaseAsset(previous.cloudinaryPublicId),
-    deleteOldRow: async (previous) => {
-      await transaction(async (client) => {
-        const deleted = await client.query("DELETE FROM app_releases WHERE id=$1 AND platform='android' AND is_active=FALSE", [previous.id]);
-        if (deleted.rowCount !== 1) throw new AppError(409, "The previous Android release can no longer be removed safely");
-      });
-    },
   });
-  response.status(201).json(created({ ...mapRelease(result.active), cleanupPending: result.cleanupPending }));
+  response.status(201).json(created({ ...mapRelease(result.active), cleanupPending: false }));
 }));
 
-/** Retries cleanup of an inactive release left behind by a previous storage failure. */
+/** No-write proof that this Function can mint a scoped public-Blob PUT delegation. */
+appReleasesRouter.post("/admin/app-releases/android/migrate-v5-private-blob/preflight", ...superAdmin, asyncRoute(async (_request, response) => {
+  await requireReleaseSchema();
+  await preflightPublicAndroidBlobWrite();
+  response.json(ok({ authorized: true }));
+}));
+
+/**
+ * Deliberately one-release-only migration. It cannot create a newer release,
+ * alter the APK, or remove the retained private source.
+ */
+appReleasesRouter.post("/admin/app-releases/android/migrate-v5-private-blob", ...superAdmin, validateBody(migrationConfirmationSchema), asyncRoute(async (_request, response) => {
+  await requireReleaseSchema();
+  const source = await activeRelease();
+  if (!source) throw notFound("No active Android release is available to migrate");
+  assertSn2V5MigrationSource(source);
+  const copied = await copyVerifiedSn2V5ToPublicBlob(source);
+  const updated = await transaction(async (client) => {
+    const result = await client.query<AppRelease>(
+      `UPDATE app_releases
+       SET file_url=$1, cloudinary_public_id=$2, updated_at=NOW()
+       WHERE id=$3 AND platform='android' AND is_active=TRUE
+         AND version_name='SN2' AND version_code=5
+         AND file_url=$4 AND sha256=$5 AND file_size=$6
+       RETURNING *`,
+      [copied.url, copied.publicId, source.id, source.file_url, SN2_V5_SHA256, SN2_V5_SIZE],
+    );
+    const release = result.rows[0];
+    if (!release) throw new AppError(409, "The Android release changed before its verified public URL could be recorded");
+    return release;
+  });
+  response.json(ok({
+    release: mapRelease(updated),
+    verification: { sha256: copied.sha256, fileSize: copied.fileSize, contentType: APK_CONTENT_TYPE },
+  }));
+}));
+
+/** Explicit deletion remains limited to an inactive release selected by a super-admin. */
 appReleasesRouter.delete("/admin/app-releases/android/:id", ...superAdmin, asyncRoute(async (request, response) => {
   await requireReleaseSchema();
   const id = idFromParams(request.params.id);

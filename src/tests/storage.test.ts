@@ -25,6 +25,25 @@ test("legacy object paths are deterministic and reject traversal", () => {
   assert.throws(() => storage.resolveLegacyUploadPath("/api/uploads/resumes/%2E%2E", "staging/starry-nights"));
 });
 
+test("public release URLs never accept private Blob endpoints", () => {
+  assert.equal(
+    storage.isManagedPublicBlobUrl("https://android-store.public.blob.vercel-storage.com/production/starry-nights/public/android-releases/release.apk"),
+    true,
+  );
+  assert.equal(
+    storage.isManagedPublicBlobUrl("https://android-store.private.blob.vercel-storage.com/production/starry-nights/public/android-releases/release.apk"),
+    false,
+  );
+  assert.equal(
+    storage.publicBlobDownloadUrl("https://android-store.public.blob.vercel-storage.com/production/starry-nights/public/android-releases/release.apk"),
+    "https://android-store.public.blob.vercel-storage.com/production/starry-nights/public/android-releases/release.apk?download=1",
+  );
+  assert.equal(
+    storage.publicBlobDownloadUrl("https://android-store.private.blob.vercel-storage.com/production/starry-nights/public/android-releases/release.apk"),
+    "https://android-store.private.blob.vercel-storage.com/production/starry-nights/public/android-releases/release.apk",
+  );
+});
+
 test("upload finalization enforces signed ownership, pathname, type, and size", async () => {
   const metadata = {
     pathname: "",

@@ -14,16 +14,14 @@ export const assertGreaterVersionCode = (currentVersionCode: number | undefined,
 };
 
 /**
- * Database activation happens before cleanup. A cleanup error deliberately
- * leaves the new release active and the old inactive row available for a safe
- * retry; it must never make the public download disappear.
+ * Database activation happens only after the replacement object has been
+ * verified. Previous releases are retained as inactive history so a storage
+ * migration never destroys the last known-good release or its metadata.
  */
 export const publishAfterUpload = async <T>(input: {
   activate: () => Promise<{ active: T; previous?: ReleaseCleanupTarget }>;
   discardNewAsset: () => Promise<void>;
-  deleteOldAsset: (previous: ReleaseCleanupTarget) => Promise<void>;
-  deleteOldRow: (previous: ReleaseCleanupTarget) => Promise<void>;
-}): Promise<{ active: T; cleanupPending: boolean }> => {
+}): Promise<{ active: T; previous?: ReleaseCleanupTarget }> => {
   let activation: { active: T; previous?: ReleaseCleanupTarget };
   try {
     activation = await input.activate();
@@ -36,12 +34,5 @@ export const publishAfterUpload = async <T>(input: {
     }
     throw error;
   }
-  if (!activation.previous) return { active: activation.active, cleanupPending: false };
-  try {
-    await input.deleteOldAsset(activation.previous);
-    await input.deleteOldRow(activation.previous);
-    return { active: activation.active, cleanupPending: false };
-  } catch {
-    return { active: activation.active, cleanupPending: true };
-  }
+  return { active: activation.active, previous: activation.previous };
 };
